@@ -19,6 +19,10 @@ Target devices: Android (Redmi 15, Chrome) and Windows 10/11 (Edge/Chrome). READ
   - Data modules load: `node -e "import('./js/data/spells.js').then(m => console.log(m.SPELLS.length))"`. The same pattern works for `feats.js` (`FEATS`) and `plans.js` (`PLANS`).
   - Behavior: Playwright scripts (`require('playwright')`, phone viewport such as Pixel 7, plus 1366×768), kept outside the repo. Seed localStorage with `page.addInitScript`: the app saves its in-memory state on `pagehide`, so data seeded after load is overwritten on reload.
 
+## Hosting
+- Live at https://matteofparisi-source.github.io/DnD/ (GitHub Pages, branch `ccr-99717c64-lm0jqw`, root folder). **Every push to that branch goes live** within about a minute.
+- `.nojekyll` makes Pages serve files as-is. Keep it.
+
 ## File map
 - `index.html`: shell; loads `css/styles.css` and `js/app.js` (module). Everything renders into `#view`.
 - `js/app.js`: all UI, derived values, actions and event wiring (about 1150 lines). Sections, in order:
@@ -86,7 +90,6 @@ Target devices: Android (Redmi 15, Chrome) and Windows 10/11 (Edge/Chrome). READ
 - Data lives per device and browser only: no sync between the user's phone and PCs (export/import only).
 - `confirm()`/`prompt()`/`alert()` are used for dialogs (hit dice, generic plans, cannon slot choice).
 - `css/styles.css` has the appended second `:root` token block instead of one merged block.
-- unverified: GitHub Pages hosting is described in README but hasn't been set up or tested from this repo.
 
 ## Keeping this file current
 - After any change that affects structure, data format, conventions, commands or features, update CLAUDE.md in the same commit. Update README.md too if the feature list changes.
