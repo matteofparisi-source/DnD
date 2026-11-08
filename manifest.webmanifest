@@ -1,7 +1,7 @@
 {
-  "name": "Artificer Ledger",
-  "short_name": "Ledger",
-  "description": "D&D 5e (2024) character sheet and campaign journal",
+  "name": "DnD Slop",
+  "short_name": "DnD Slop",
+  "description": "Artificer Artillerist sheet and Eberron campaign journal (D&D 2024 rules)",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
