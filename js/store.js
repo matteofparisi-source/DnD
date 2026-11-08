@@ -1,6 +1,6 @@
 // Persistence: everything is kept in this browser's localStorage, with JSON export/import for backups.
-const KEY = 'dnd-companion-v1';
-export const SCHEMA_VERSION = 1;
+export const KEY = 'dnd-companion-v1';
+export const SCHEMA_VERSION = 2;
 
 export const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
 
@@ -8,38 +8,37 @@ export function defaultState() {
   return {
     version: SCHEMA_VERSION,
     character: {
-      name: '', player: '', species: '', background: '', alignment: '', xp: 0,
-      classes: [{ id: uid(), name: 'Fighter', subclass: '', level: 1, hdUsed: 0 }],
-      abilities: { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10 },
-      saveProf: { str: false, dex: false, con: false, int: false, wis: false, cha: false },
+      name: '', player: '', species: '', background: '', alignment: '', xp: 0, level: 1, size: 'Medium',
+      abilities: { str: 8, dex: 14, con: 14, int: 15, wis: 10, cha: 10 },
+      saveProf: { str: false, dex: false, con: true, int: true, wis: false, cha: false },
       saveBonus: 0,
       skills: {}, // skillKey -> 0 none, 1 proficient, 2 expertise
-      jackOfAllTrades: false,
-      hp: { max: 10, current: 10, temp: 0 },
-      ac: 10, speed: 30, initBonus: 0, size: 'Medium',
+      hp: { max: 10, current: 10, temp: 0, auto: true },
+      hdUsed: 0,
+      ac: 13, speed: 30, initBonus: 0,
       inspiration: false, exhaustion: 0,
       deathSaves: { success: 0, fail: 0 },
       conditions: [],
       attacks: [],
-      spellcasting: {
-        ability: '', bonusAttack: 0, bonusDC: 0,
-        slots: Array.from({ length: 9 }, () => ({ max: 0, used: 0 })),
-        pact: { max: 0, level: 1, used: 0 },
-      },
-      spells: [],
-      inventory: [],
+      uses: {},           // feature key -> used count
+      slotsUsed: [0, 0, 0, 0, 0],
+      cannons: [],        // active Eldritch Cannons: { id, hp }
+      spells: {},         // spell id -> 'prepared' (levelled) | 'known' (cantrip)
+      spellNotes: {},
+      plans: { known: {}, custom: [] },
+      items: [],
       coins: { cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 },
-      features: [],
+      gear: '',
+      feats: [],          // { id, featId, level, notes }
       proficiencies: { armor: '', weapons: '', tools: '', languages: '' },
       bio: { appearance: '', personality: '', backstory: '', allies: '', notes: '' },
     },
-    campaign: { name: '', dm: '', setting: '', startDate: '', notes: '' },
+    campaign: { name: '', dm: '', setting: 'Eberron', startDate: '', notes: '' },
     sessions: [],
-    ui: { tab: 'stats' },
+    ui: { tab: 'stats', f: {} },
   };
 }
 
-// Fill in any field missing from older saves or imports so the app never crashes on partial data.
 function merge(base, data) {
   if (Array.isArray(base)) return Array.isArray(data) ? data : base;
   if (base && typeof base === 'object') {
@@ -53,12 +52,22 @@ function merge(base, data) {
 }
 
 export function normalize(data) {
-  const s = merge(defaultState(), data || {});
-  const slots = s.character.spellcasting.slots;
-  while (slots.length < 9) slots.push({ max: 0, used: 0 });
-  s.character.classes.forEach((c) => { c.id ||= uid(); c.hdUsed ||= 0; });
-  for (const list of ['attacks', 'spells', 'inventory', 'features']) s.character[list].forEach((x) => { x.id ||= uid(); });
-  s.sessions.forEach((x) => { x.id ||= uid(); });
+  const d = data && typeof data === 'object' ? { ...data } : {};
+  // v1 (generic sheet) -> v2 (Artificer): keep what still applies.
+  if (d.character && (!d.version || d.version < 2)) {
+    const c = { ...d.character };
+    if (Array.isArray(c.classes)) c.level = c.classes.reduce((s, x) => s + (Number(x.level) || 0), 0) || 1;
+    delete c.classes; delete c.spells; delete c.features; delete c.spellcasting;
+    if (Array.isArray(c.inventory)) c.gear = c.inventory.map((i) => `${i.qty > 1 ? `${i.qty}× ` : ''}${i.name}`).filter(Boolean).join('\n');
+    delete c.inventory;
+    d.character = c;
+  }
+  d.version = SCHEMA_VERSION;
+  const s = merge(defaultState(), d);
+  const c = s.character;
+  c.level = Math.max(1, Math.min(20, Number(c.level) || 1));
+  while (c.slotsUsed.length < 5) c.slotsUsed.push(0);
+  for (const list of [c.attacks, c.items, c.feats, c.cannons, c.plans.custom, s.sessions]) list.forEach((x) => { x.id ||= uid(); });
   return s;
 }
 
@@ -82,12 +91,16 @@ export function save(state) {
   }
 }
 
-export function exportJSON(state) {
-  const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
+export function backupFile(state) {
+  const name = (state.character.name || 'artificer').replace(/[^\w-]+/g, '_');
+  const filename = `dnd-${name}-${new Date().toISOString().slice(0, 10)}.json`;
+  return new File([JSON.stringify(state, null, 2)], filename, { type: 'application/json' });
+}
+
+export function downloadFile(file) {
   const a = document.createElement('a');
-  const name = (state.character.name || 'character').replace(/[^\w-]+/g, '_');
-  a.href = URL.createObjectURL(blob);
-  a.download = `dnd-${name}-${new Date().toISOString().slice(0, 10)}.json`;
+  a.href = URL.createObjectURL(file);
+  a.download = file.name;
   document.body.appendChild(a);
   a.click();
   a.remove();

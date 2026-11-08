@@ -1,7 +1,8 @@
 // Offline support: network first (so updates show up right away), falling back to the cached copy.
-const CACHE = 'ledger-v1';
+const CACHE = 'ledger-v2';
 const ASSETS = [
   './', './index.html', './css/styles.css', './js/app.js', './js/rules.js', './js/store.js',
+  './js/data/artificer.js', './js/data/spells.js', './js/data/plans.js', './js/data/feats.js',
   './manifest.webmanifest', './icons/icon.svg', './icons/icon-180.png', './icons/icon-192.png', './icons/icon-512.png',
 ];
 

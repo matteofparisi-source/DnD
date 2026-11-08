@@ -1,0 +1,68 @@
+// Replicate Magic Item plans (Forge of the Artificer). [name, type, attunement]
+// attunement: true / false / null (varies). `generic` plans can be learned several times, once per chosen item.
+const P = (tier, name, type, attune, generic = false) => ({ tier, name, type, attune, generic });
+
+export const PLANS = [
+  P(2, 'Alchemy Jug', 'Wondrous', false),
+  P(2, 'Bag of Holding', 'Wondrous', false),
+  P(2, 'Cap of Water Breathing', 'Wondrous', false),
+  P(2, 'Common magic item (not a Potion, Scroll, or cursed)', 'Any', null, true),
+  P(2, 'Goggles of Night', 'Wondrous', false),
+  P(2, 'Manifold Tool', 'Wondrous', true),
+  P(2, 'Repeating Shot', 'Weapon', true),
+  P(2, 'Returning Weapon', 'Weapon', false),
+  P(2, 'Rope of Climbing', 'Wondrous', false),
+  P(2, 'Sending Stones', 'Wondrous', false),
+  P(2, 'Shield +1', 'Shield', false),
+  P(2, 'Wand of Magic Detection', 'Wand', false),
+  P(2, 'Wand of Secrets', 'Wand', false),
+  P(2, 'Wand of the War Mage +1', 'Wand', true),
+  P(2, 'Weapon +1', 'Weapon', false),
+  P(2, 'Wraps of Unarmed Power +1', 'Wondrous', false),
+
+  P(6, 'Armor +1', 'Armor', false),
+  P(6, 'Boots of Elvenkind', 'Wondrous', false),
+  P(6, 'Boots of the Winding Path', 'Wondrous', true),
+  P(6, 'Cloak of Elvenkind', 'Wondrous', true),
+  P(6, 'Cloak of the Manta Ray', 'Wondrous', false),
+  P(6, 'Dazzling Weapon', 'Weapon', true),
+  P(6, 'Eyes of Charming', 'Wondrous', true),
+  P(6, 'Eyes of Minute Seeing', 'Wondrous', false),
+  P(6, 'Gloves of Thievery', 'Wondrous', false),
+  P(6, 'Helm of Awareness', 'Wondrous', false),
+  P(6, 'Lantern of Revealing', 'Wondrous', false),
+  P(6, 'Mind Sharpener', 'Wondrous', true),
+  P(6, 'Necklace of Adaptation', 'Wondrous', true),
+  P(6, 'Pipes of Haunting', 'Wondrous', false),
+  P(6, 'Repulsion Shield', 'Shield', false),
+  P(6, 'Ring of Swimming', 'Ring', false),
+  P(6, 'Ring of Water Walking', 'Ring', false),
+  P(6, 'Sentinel Shield', 'Shield', false),
+  P(6, 'Spell-Refueling Ring', 'Ring', true),
+  P(6, 'Wand of Magic Missiles', 'Wand', false),
+  P(6, 'Wand of Web', 'Wand', true),
+  P(6, 'Weapon of Warning', 'Weapon', true),
+
+  P(10, 'Armor of Resistance', 'Armor', true),
+  P(10, 'Dagger of Venom', 'Weapon', false),
+  P(10, 'Elven Chain', 'Armor', false),
+  P(10, 'Ring of Feather Falling', 'Ring', true),
+  P(10, 'Ring of Jumping', 'Ring', true),
+  P(10, 'Ring of Mind Shielding', 'Ring', true),
+  P(10, 'Shield +2', 'Shield', false),
+  P(10, 'Uncommon Wondrous Item (not cursed)', 'Wondrous', null, true),
+  P(10, 'Wand of the War Mage +2', 'Wand', true),
+  P(10, 'Weapon +2', 'Weapon', false),
+  P(10, 'Wraps of Unarmed Power +2', 'Wondrous', false),
+
+  P(14, 'Armor +2', 'Armor', false),
+  P(14, 'Arrow-Catching Shield', 'Shield', true),
+  P(14, 'Flame Tongue', 'Weapon', true),
+  P(14, 'Rare Wondrous Item (not cursed)', 'Wondrous', null, true),
+  P(14, 'Ring of Free Action', 'Ring', true),
+  P(14, 'Ring of Protection', 'Ring', true),
+  P(14, 'Ring of the Ram', 'Ring', true),
+].map((p) => ({ ...p, id: `${p.tier}-${p.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/-$/, '')}` }));
+
+export const PLAN_TYPES = ['Armor', 'Shield', 'Weapon', 'Wand', 'Ring', 'Wondrous', 'Any'];
+export const TIERS = [2, 6, 10, 14];

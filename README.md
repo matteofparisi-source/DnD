@@ -1,68 +1,64 @@
 # DnD Slop
 
-A D&D 5e **2024 rules** character sheet and campaign journal. It runs in the browser on phone and PC, works offline, and can be installed to your home screen. There is no server and no account: your data stays on your device.
+A character sheet and campaign journal for an **Artificer (Artillerist)** in an **Eberron** campaign, using the D&D 2024 rules with the 2025 *Eberron: Forge of the Artificer* Artificer.
 
-## Features
+It works offline, installs like an app on Android and Windows, and needs no account or server.
 
-**Character sheet**
-- Identity, species, background and XP, with the XP needed for the next level
-- Multiclass support: total level drives the Proficiency Bonus
-- Ability scores with automatic modifiers
-- Saving throws (one tap applies your first class's proficiencies), plus a bonus to all saves
-- 18 skills with none / proficient / expertise, Jack of All Trades, and Passive Perception
-- HP with damage, heal and temporary HP (damage uses temp HP first; temp HP don't stack), death saves, and Hit Dice you can spend
-- AC, Speed, Initiative, Heroic Inspiration, Exhaustion (shows the 2024 penalty), and conditions
-- Attacks with automatic to-hit and damage, damage type and Weapon Mastery
-- Spellcasting: save DC, spell attack, spell slots (auto-filled from your classes using the multiclass Spellcaster table), Pact Magic, and a spell list grouped by level
-- Inventory with weight vs. carrying capacity, coins and attunement count
-- Features with limited uses that reset on a Short or Long Rest
-- Proficiencies, languages, appearance, personality and backstory
+## Pages
 
-**Rests**
-- *Short rest*: resets short-rest features and Pact Magic slots; you then spend Hit Dice in the Combat tab
-- *Long rest* (2024): full HP, all Hit Dice and spell slots, all features, Exhaustion −1, temp HP and death saves cleared
+| Page | What's in it |
+|---|---|
+| **Stats** | Identity, Artificer level 1-20, ability scores, saves (CON/INT preset), skills (Artificer choices marked **A**), proficiencies, all class and Artillerist features by level with use trackers |
+| **Combat** | HP (auto max: 8 + CON, then 5 + CON per level), damage/heal/temp HP, death saves, d8 Hit Dice, AC, conditions, exhaustion, the **Eldritch Cannon** panel (create, HP, modes with your DC and damage, Detonate at level 9, two cannons at 15), spell slots, limited uses, attacks with an Arcane Firearm flag |
+| **Spells** | Only Artificer spells. Each spell shows a **level tag** and a **status flag**: *Always prepared* (Artillerist spells and Mending), *Prepared / Known*, or *Not prepared*. Counters show prepared and cantrips against your level's limit |
+| **Plans** | Every Replicate Magic Item plan by tier (level 2+, 6+, 10+, 14+). Learn or forget plans, learn the "any Common / Uncommon Wondrous / Rare Wondrous" options as named items, and **Create** an item into Magic items (the oldest vanishes if you go over your limit) |
+| **Magic items** | Items you replicated or found: rarity, type, attunement (counter against 3/4/5/6), equipped, charges, notes |
+| **Feats** | PHB 2024, Tasha's, Xanathar's and Forge of the Artificer feats (Dragonmarks, Greater Dragonmarks, Boon of Siberys), with prerequisites checked against your character |
+| **★ Selected** | Everything you've chosen in one place: spells by level, known plans, items, feats, skills, conditions |
+| **Journal** | Session notes with search |
+| **Campaign & data** | Campaign notes, and backup share/download/import |
 
-**Campaign**
-- Session journal: number, real and in-game date, summary, notes, loot, open threads, plus full-text search
-- Campaign notes (DM, setting, house rules…)
-- Backup export and import (JSON)
+**Filters:** Spells (search, level, status, school, concentration, ritual, above-my-level, legacy), Plans (search, tier, known, type, attunement, learnable now), Items (search, attuned/equipped, origin, type, rarity), Feats (search, category, taken, book, "only feats I qualify for"). Every filter has a **★ Selected / Known / Taken** option.
 
-Every number can also be edited by hand, so homebrew and items the app doesn't know about still work.
+**Rests:** a *Long rest* restores HP, Hit Dice, slots and all uses, removes cannons, and lowers Exhaustion by 1. A *Short rest* applies Refreshed Genius (level 14) or Magical Guidance (level 20).
 
-## Run it
+## Install
 
-There's no build step. Serve the folder with any static web server:
+### Redmi 15 (Android)
+1. Open the app's URL in **Chrome**. The Xiaomi/Mi Browser has weaker app-install support.
+2. Menu ⋮ → **Add to Home screen** → **Install**.
 
-```bash
-python3 -m http.server 8000
-# open http://localhost:8000
-```
+### Windows 10 / 11
+1. Open the URL in **Edge** or **Chrome**.
+2. Click the **Install** icon in the address bar, or Menu → *Apps → Install this site as an app*.
 
-Opening `index.html` straight from disk won't work, because browsers block ES modules on `file://`.
+### Hosting (GitHub Pages)
+On GitHub, open **Settings → Pages** and deploy from this branch, folder `/ (root)`. Free accounts need the repository to be public. Only the app code is public: your character stays on your devices.
 
-## Put it on your phone (GitHub Pages)
+To run it locally instead: `python3 -m http.server 8000`, then open `http://localhost:8000`.
 
-1. On GitHub, go to **Settings → Pages**, set *Source* to "Deploy from a branch", then pick the branch and `/ (root)`.
-2. Open the URL GitHub gives you on your phone.
-   - **iPhone (Safari):** Share → *Add to Home Screen*
-   - **Android (Chrome):** menu → *Install app* / *Add to Home screen*
+## Your data — important
 
-GitHub Pages on a free account needs the repository to be **public**. Your character data is not in the repository, only the app code.
+- Each device and browser keeps **its own copy**. Your Redmi and your Windows PCs **don't sync**.
+- To move your character: **Campaign & data → Share backup** (Android: send it to Drive, WhatsApp, email…) or **Download backup**. On the other device, use **Import backup**. Importing replaces that device's data.
+- Clearing browser data deletes it. Export a backup after every session.
 
-## Your data: read this
+## Rules accuracy
 
-- Data lives in the browser's `localStorage`, **separately on each device and browser**. Your phone and your PC do not sync.
-- To move data, use **Campaign → Export backup** on one device and **Import backup** on the other.
-- Browsers can delete site data. Safari on iOS may clear data for sites not used in 7 days unless the app is added to the Home Screen. Clearing browser data also deletes it. **Export a backup regularly**, for example after each session.
+- Class numbers, Artillerist features, plan lists and the Artificer spell list come from community transcriptions of *Forge of the Artificer* (dnd2024.wikidot.com), cross-checked with guides (rpgbot.net, dungeonmister.com). **I could not check them against the book itself.** If something differs from your book, the book wins. The data lives in `js/data/*.js` and is easy to fix.
+- **Legacy spells:** these were on the 2020 Tasha's Artificer list (Absorb Elements, Catapult, Tasha's Caustic Brew, etc.) but don't appear on the 2025 list. They're hidden unless you enable them. Ask your DM.
+- **Feats:** summaries are short reminders in my own words, not rules text. Where a Tasha's/Xanathar's feat was reprinted in the 2024 PHB, only the 2024 version is listed, following the 2024 rule that the newer version wins. Xanathar's racial feats were written for 2014 species; check with your DM.
+- The app doesn't reproduce the books' text. Spell, feat and item descriptions are left to your notes fields.
 
 ## Project layout
 
 ```
-index.html            app shell
-css/styles.css        styles (light and dark themes)
-js/app.js             UI, calculations, actions
-js/rules.js           2024 rules data (classes, skills, slot tables, XP…)
-js/store.js           save, load, import, export
-sw.js                 offline cache
-manifest.webmanifest  install-to-home-screen metadata
+index.html, css/styles.css, sw.js, manifest.webmanifest
+js/app.js              UI and actions
+js/store.js            saving, import/export, migration from the first version
+js/rules.js            generic 2024 rules data
+js/data/artificer.js   class table, features, Artillerist, cannon math
+js/data/spells.js      Artificer spell list (+ Artillerist, + legacy)
+js/data/plans.js       Replicate Magic Item plans
+js/data/feats.js       feats from the four books
 ```
