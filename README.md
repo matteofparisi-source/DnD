@@ -1,4 +1,4 @@
-# Adventurer's Ledger
+# DnD Slop
 
 A D&D 5e **2024 rules** character sheet and campaign journal. It runs in the browser on phone and PC, works offline, and can be installed to your home screen. There is no server and no account: your data stays on your device.
 
