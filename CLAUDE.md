@@ -38,7 +38,7 @@ Target devices: Android (Redmi 15, Chrome) and Windows 10/11 (Edge/Chrome). READ
 - `js/data/artificer.js`:
   - per-level tables (`PLANS_KNOWN`, `MAGIC_ITEMS`, `CANTRIPS`, `PREPARED`, `SLOTS`) read with `at(arr, level)`
   - `FEATURES` (class plus Artillerist) and `USES` (tracked limited uses)
-  - `ARTILLERIST_SPELLS`, `cannonStats()`, `attunementLimit()`, `maxSpellLevel()`, species/background suggestions
+  - `ARTILLERIST_SPELLS`, `cannonStats()`, `attunementLimit()`, `maxSpellLevel()`, species suggestions
 - `js/data/spells.js`: `SPELLS` with `source`: `list` (2025 Artificer list), `tinker` (Mending), `artillerist`, `legacy` (2020 Tasha's list, hidden by default). Also exports `SOURCE_LABEL`, `SCHOOLS`, `slug`.
 - `js/data/plans.js`: `PLANS` (Replicate Magic Item, tiers 2/6/10/14; `generic` = "any item of this kind"), `PLAN_TYPES`, `TIERS`.
 - `js/data/feats.js`: `FEATS` (PHB 2024, Tasha's, Xanathar's, Eberron) with a `req` object used by `meetsReq()` in app.js. Also exports `FEAT_CATEGORIES`, `FEAT_SOURCES`.

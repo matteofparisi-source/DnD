@@ -8,7 +8,7 @@ It works offline, installs like an app on Android and Windows, and needs no acco
 
 | Page | What's in it |
 |---|---|
-| **Stats** | Identity, Artificer level 1-20, ability scores, saves (CON/INT preset), skills (Artificer choices marked **A**), proficiencies, all class and Artillerist features by level with use trackers |
+| **Stats** | Identity (name, player, level, species, alignment, size), Artificer level 1-20, ability scores, saves (CON/INT preset), skills (Artificer choices marked **A**), proficiencies and resistances, all class and Artillerist features by level with use trackers |
 | **Combat** | HP (auto max: 8 + CON, then 5 + CON per level), damage/heal/temp HP, death saves, d8 Hit Dice, AC, conditions, exhaustion, the **Eldritch Cannon** panel (create, HP, modes with your DC and damage, Detonate at level 9, two cannons at 15), spell slots, limited uses, attacks with an Arcane Firearm flag |
 | **Spells** | Only Artificer spells. Each spell shows a **level tag** and a **status flag**: *Always prepared* (Artillerist spells and Mending), *Prepared / Known*, or *Not prepared*. Counters show prepared and cantrips against your level's limit |
 | **Plans** | Every Replicate Magic Item plan by tier (level 2+, 6+, 10+, 14+). Learn or forget plans, learn the "any Common / Uncommon Wondrous / Rare Wondrous" options as named items, and **Create** an item into Magic items (the oldest vanishes if you go over your limit) |

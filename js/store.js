@@ -8,7 +8,7 @@ export function defaultState() {
   return {
     version: SCHEMA_VERSION,
     character: {
-      name: '', player: '', species: '', background: '', alignment: '', xp: 0, level: 1, size: 'Medium',
+      name: '', player: '', species: '', background: '', alignment: '', xp: 0, level: 1, size: 'Medium', resistances: '',
       abilities: { str: 8, dex: 14, con: 14, int: 15, wis: 10, cha: 10 },
       saveProf: { str: false, dex: false, con: true, int: true, wis: false, cha: false },
       saveBonus: 0,

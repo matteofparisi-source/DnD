@@ -87,7 +87,3 @@ export const SPECIES_SUGGESTIONS = [
   'Aasimar', 'Dragonborn', 'Dwarf', 'Elf', 'Gnome', 'Goliath', 'Halfling', 'Human', 'Orc', 'Tiefling',
   'Changeling', 'Kalashtar', 'Khoravar', 'Shifter', 'Warforged',
 ];
-export const BACKGROUNDS = [
-  'Acolyte', 'Artisan', 'Charlatan', 'Criminal', 'Entertainer', 'Farmer', 'Guard', 'Guide',
-  'Hermit', 'Merchant', 'Noble', 'Sage', 'Sailor', 'Scribe', 'Soldier', 'Wayfarer',
-];

@@ -1,7 +1,7 @@
-import { ABILITIES, SKILLS, ALIGNMENTS, CONDITIONS, DAMAGE_TYPES, WEAPON_MASTERIES, XP_THRESHOLDS, mod, profBonus, fmt } from './rules.js';
+import { ABILITIES, SKILLS, ALIGNMENTS, CONDITIONS, DAMAGE_TYPES, WEAPON_MASTERIES, mod, profBonus, fmt } from './rules.js';
 import {
   PLANS_KNOWN, MAGIC_ITEMS, CANTRIPS, PREPARED, SLOTS, attunementLimit, maxSpellLevel, at, SKILL_CHOICES,
-  PROFICIENCIES, ARTILLERIST_PROFICIENCIES, FEATURES, USES, ARTILLERIST_SPELLS, cannonStats, SPECIES_SUGGESTIONS, BACKGROUNDS,
+  PROFICIENCIES, ARTILLERIST_PROFICIENCIES, FEATURES, USES, ARTILLERIST_SPELLS, cannonStats, SPECIES_SUGGESTIONS,
 } from './data/artificer.js';
 import { SPELLS, SOURCE_LABEL, SCHOOLS } from './data/spells.js';
 import { PLANS, PLAN_TYPES, TIERS } from './data/plans.js';
@@ -121,7 +121,7 @@ function calc(key) {
     case 'init': return fmt(am('dex') + num(c.initBonus));
     case 'passive': return String(10 + skillMod('perception'));
     case 'name': return c.name || 'Unnamed Artificer';
-    case 'subtitle': return [`Artificer${lvl() >= 3 ? ' (Artillerist)' : ''} ${lvl()}`, c.species, c.background].filter(Boolean).join(' · ');
+    case 'subtitle': return [`Artificer${lvl() >= 3 ? ' (Artillerist)' : ''} ${lvl()}`, c.species].filter(Boolean).join(' · ');
     case 'hp': return `${c.hp.current}${num(c.hp.temp) ? ` +${c.hp.temp}` : ''} / ${maxHP()}`;
     case 'hpPct': return String(Math.max(0, Math.min(100, (num(c.hp.current) / Math.max(1, maxHP())) * 100)));
     case 'ac': return String(num(c.ac));
@@ -130,7 +130,6 @@ function calc(key) {
     case 'autoHP': return String(autoMaxHP());
     case 'atk': { const a = c.attacks.find((x) => x.id === arg); return a ? fmt(attackParts(a).hit) : ''; }
     case 'dmg': { const a = c.attacks.find((x) => x.id === arg); return a ? attackParts(a).dmg : ''; }
-    case 'xpNext': return lvl() >= 20 ? 'max level' : `${XP_THRESHOLDS[lvl()].toLocaleString()} XP for level ${lvl() + 1}`;
     case 'exhaustion': {
       const e = num(c.exhaustion);
       if (!e) return '';
@@ -191,7 +190,6 @@ function pips(path, max, used, label = 'use') {
 const calcSpan = (key, cls = '') => `<span class="${cls}" data-calc="${esc(key)}">${esc(calc(key))}</span>`;
 const datalists = () => `
   <datalist id="dl-species">${SPECIES_SUGGESTIONS.map((c) => `<option value="${c}">`).join('')}</datalist>
-  <datalist id="dl-bg">${BACKGROUNDS.map((c) => `<option value="${c}">`).join('')}</datalist>
   <datalist id="dl-align">${ALIGNMENTS.map((c) => `<option value="${c}">`).join('')}</datalist>
   <datalist id="dl-dmg">${DAMAGE_TYPES.map((c) => `<option value="${c}">`).join('')}</datalist>
   <datalist id="dl-mastery">${WEAPON_MASTERIES.map((c) => `<option value="${c}">`).join('')}</datalist>`;
@@ -291,12 +289,10 @@ function tabStats() {
       ${input('character.player', { label: 'Player' })}
       ${select('character.level', Array.from({ length: 20 }, (_, i) => [i + 1, `Artificer ${i + 1}${i + 1 >= 3 ? ' · Artillerist' : ''}`]), { label: 'Level', type: 'number', rerender: true })}
       ${input('character.species', { label: 'Species', list: 'dl-species', rerender: true })}
-      ${input('character.background', { label: 'Background', list: 'dl-bg' })}
       ${input('character.alignment', { label: 'Alignment', list: 'dl-align' })}
       ${select('character.size', ['Small', 'Medium'], { label: 'Size' })}
-      ${input('character.xp', { label: 'Experience points', type: 'number', min: 0 })}
     </div>
-    <p class="hint">Next: ${calcSpan('xpNext')} · Proficiency Bonus ${calcSpan('pb')}</p>
+    <p class="hint">Proficiency Bonus ${calcSpan('pb')}</p>
   </section>
 
   <section class="card">
@@ -318,6 +314,7 @@ function tabStats() {
       ${input('character.proficiencies.tools', { label: 'Your Artisan\'s Tools & other tools', cls: 'wide' })}
       ${input('character.proficiencies.languages', { label: 'Languages', cls: 'wide' })}
       ${input('character.proficiencies.armor', { label: 'Other proficiencies (species, background, feats)', cls: 'wide' })}
+      ${textarea('character.resistances', { label: 'Resistances (damage types, conditions…)', rows: 2 })}
     </section>
     <section class="card">
       <h2>Skills</h2>
@@ -331,14 +328,6 @@ function tabStats() {
     <h2>Class features</h2>
     <p class="hint">Features you have are highlighted; tap circles to mark uses. Rests reset them.</p>
     <div class="features">${feats}</div>
-  </section>
-
-  <section class="card">
-    <h2>Character</h2>
-    ${textarea('character.bio.appearance', { label: 'Appearance', rows: 2 })}
-    ${textarea('character.bio.personality', { label: 'Personality, ideals, bonds, flaws', rows: 3 })}
-    ${textarea('character.bio.backstory', { label: 'Backstory', rows: 6 })}
-    ${textarea('character.bio.allies', { label: 'Allies, house, organizations', rows: 3 })}
   </section>`;
 }
 
