@@ -1,7 +1,24 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="96" fill="#8b2c2c"/>
-  <polygon points="256,72 415,164 415,348 256,440 97,348 97,164" fill="none" stroke="#f6f2ea" stroke-width="22" stroke-linejoin="round"/>
-  <polygon points="256,150 352,320 160,320" fill="none" stroke="#f6f2ea" stroke-width="18" stroke-linejoin="round"/>
-  <path d="M256 72 256 150 M415 164 352 320 M97 164 160 320 M256 440 352 320 M256 440 160 320 M415 348 352 320 M97 348 160 320 M415 164 256 150 M97 164 256 150" stroke="#f6f2ea" stroke-width="12" stroke-linecap="round" opacity=".7"/>
-  <text x="256" y="292" text-anchor="middle" font-family="Georgia, serif" font-size="88" font-weight="700" fill="#f6f2ea">20</text>
+  <defs>
+    <linearGradient id="p" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f6ead0"/><stop offset="1" stop-color="#e2cb98"/></linearGradient>
+    <linearGradient id="r" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#b98c4a"/><stop offset=".5" stop-color="#f1d59a"/><stop offset="1" stop-color="#a97b3c"/></linearGradient>
+    <radialGradient id="w" cx=".38" cy=".32" r=".8"><stop offset="0" stop-color="#d03a30"/><stop offset=".6" stop-color="#9c211c"/><stop offset="1" stop-color="#6e1411"/></radialGradient>
+  </defs>
+  <rect width="512" height="512" rx="96" fill="#2b1d12"/>
+  <!-- scroll body -->
+  <rect x="120" y="120" width="272" height="272" fill="url(#p)" stroke="#8a6a3a" stroke-width="4"/>
+  <path d="M120 120H392M120 392H392" stroke="#c9a96a" stroke-width="3"/>
+  <!-- rolled ends -->
+  <rect x="96" y="100" width="320" height="44" rx="22" fill="url(#r)" stroke="#6b4a22" stroke-width="5"/>
+  <rect x="96" y="368" width="320" height="44" rx="22" fill="url(#r)" stroke="#6b4a22" stroke-width="5"/>
+  <ellipse cx="108" cy="122" rx="9" ry="14" fill="#6b4a22" opacity=".6"/><ellipse cx="404" cy="122" rx="9" ry="14" fill="#6b4a22" opacity=".6"/>
+  <ellipse cx="108" cy="390" rx="9" ry="14" fill="#6b4a22" opacity=".6"/><ellipse cx="404" cy="390" rx="9" ry="14" fill="#6b4a22" opacity=".6"/>
+  <!-- text lines -->
+  <path d="M158 178H354M158 208H330M158 238H350" stroke="#8a6a3a" stroke-width="7" stroke-linecap="round" opacity=".55"/>
+  <!-- wax seal -->
+  <path d="M256 250c28-4 54 10 62 34 8 26-6 56-34 66-24 8-58-2-68-30-10-30 8-66 40-70z" fill="url(#w)" stroke="#5a0f0d" stroke-width="5"/>
+  <circle cx="262" cy="304" r="44" fill="none" stroke="#e8a89a" stroke-width="3" opacity=".5"/>
+  <!-- d20 -->
+  <polygon points="262,274 288,289 288,319 262,334 236,319 236,289" fill="none" stroke="#f3cf7a" stroke-width="5" stroke-linejoin="round"/>
+  <polygon points="262,284 278,313 246,313" fill="none" stroke="#f3cf7a" stroke-width="4" stroke-linejoin="round"/>
 </svg>

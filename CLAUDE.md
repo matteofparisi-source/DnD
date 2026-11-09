@@ -42,7 +42,8 @@ Target devices: Android (Redmi 15, Chrome) and Windows 10/11 (Edge/Chrome). READ
 - `js/data/spells.js`: `SPELLS` with `source`: `list` (2025 Artificer list), `tinker` (Mending), `artillerist`, `legacy` (2020 Tasha's list, hidden by default). Also exports `SOURCE_LABEL`, `SCHOOLS`, `slug`.
 - `js/data/plans.js`: `PLANS` (Replicate Magic Item, tiers 2/6/10/14; `generic` = "any item of this kind"), `PLAN_TYPES`, `TIERS`.
 - `js/data/feats.js`: `FEATS` (PHB 2024, Tasha's, Xanathar's, Eberron) with a `req` object used by `meetsReq()` in app.js. Also exports `FEAT_CATEGORIES`, `FEAT_SOURCES`.
-- `css/styles.css`: color tokens on `:root` with a `prefers-color-scheme: dark` override. A second `:root` block near the end holds the tokens added for the Artificer UI.
+- `css/styles.css`: one coherent file with a single `:root` token block (light "sunlit parchment") plus a `prefers-color-scheme: dark` override ("moonlit scroll"). Magical-parchment look: grain texture on the page and tab bar only (cards stay smooth for readability), gold corner flourishes, ribbon tabs, glowing arcane pips. Fonts are self-hosted via `@font-face`.
+- `fonts/`: latin-subset woff2 files (Cinzel, Cinzel Decorative, EB Garamond; OFL licenses in `OFL-*.txt`). `img/grain.png`: tileable parchment grain overlay. Both are listed in `sw.js` `ASSETS` (not the license files).
 - `sw.js`: offline cache. `manifest.webmanifest` + `icons/`: install metadata.
 
 ## State and data
@@ -89,7 +90,6 @@ Target devices: Android (Redmi 15, Chrome) and Windows 10/11 (Edge/Chrome). READ
 - No automated tests in the repo; checks are manual or ad-hoc Playwright.
 - Data lives per device and browser only: no sync between the user's phone and PCs (export/import only).
 - `confirm()`/`prompt()`/`alert()` are used for dialogs (hit dice, generic plans, cannon slot choice).
-- `css/styles.css` has the appended second `:root` token block instead of one merged block.
 
 ## Keeping this file current
 - After any change that affects structure, data format, conventions, commands or features, update CLAUDE.md in the same commit. Update README.md too if the feature list changes.

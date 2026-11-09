@@ -1,9 +1,12 @@
 // Offline support: network first (so updates show up right away), falling back to the cached copy.
-const CACHE = 'ledger-v3';
+const CACHE = 'ledger-v4';
 const ASSETS = [
   './', './index.html', './css/styles.css', './js/app.js', './js/rules.js', './js/store.js',
   './js/data/artificer.js', './js/data/spells.js', './js/data/plans.js', './js/data/feats.js',
   './manifest.webmanifest', './icons/icon.svg', './icons/icon-180.png', './icons/icon-192.png', './icons/icon-512.png',
+  './img/grain.png',
+  './fonts/cinzel-latin-400-normal.woff2', './fonts/cinzel-latin-700-normal.woff2', './fonts/cinzel-decorative-latin-700-normal.woff2',
+  './fonts/eb-garamond-latin-400-normal.woff2', './fonts/eb-garamond-latin-400-italic.woff2', './fonts/eb-garamond-latin-600-normal.woff2',
 ];
 
 self.addEventListener('install', (e) => {
