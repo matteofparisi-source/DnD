@@ -381,6 +381,22 @@ footer { text-align: center; font-size: .85rem; padding: 12px; color: var(--ink-
 .tag-s.c { color: var(--wax); border-color: currentColor; }
 .tag-s.r { color: var(--arcane); border-color: currentColor; }
 .tag-s.src { font-style: italic; }
+.tag-s.ok { color: var(--verdigris); border-color: currentColor; }
+.tag-s.warn { color: var(--wax); border-color: currentColor; }
+
+/* ---- Spell descriptions ---- */
+.spell-desc { margin-top: 8px; border-top: 1px dashed var(--line); padding-top: 6px; }
+.spell-desc summary { cursor: pointer; min-height: 32px; display: flex; align-items: center; color: var(--gold-ink); font-family: "Cinzel", Georgia, serif; font-size: .78rem; letter-spacing: .08em; text-transform: uppercase; }
+.spell-desc[open] summary { margin-bottom: 6px; }
+.sd-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 12px; margin: 0 0 8px; }
+.sd-grid div { min-width: 0; }
+.sd-grid dt { font-family: "Cinzel", "Trajan Pro", "Palatino Linotype", Georgia, serif; font-size: .66rem; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-muted); }
+.sd-grid dd { margin: 0; font-size: .95rem; overflow-wrap: anywhere; }
+.spell-desc p { margin: 6px 0 0; font-size: .95rem; overflow-wrap: anywhere; }
+.sd-src { font-size: .85rem !important; }
+.sd-src a { color: var(--arcane); }
+.sd-note { font-style: italic; color: var(--wax); font-size: .88rem !important; }
+@media (min-width: 700px) { .sd-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 
 /* ---- Features, reference ---- */
 .features { display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }

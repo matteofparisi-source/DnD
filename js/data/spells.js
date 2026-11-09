@@ -2,6 +2,8 @@
 // Source groups:
 //  - 'list':   the Artificer spell list for the 2025 Forge of the Artificer class
 //  - 'artillerist': Artillerist subclass spells (always prepared at the listed level; not on the class list)
+//  - 'extra':  spells from official books outside the user's set (PHB 2024, Tasha's, Xanathar's, Eberron: Forge of
+//              the Artificer). They sit on the 2025 list but carry a `book` name; hidden by default (see EXTRA_BOOK).
 //  - 'legacy': spells on the 2020 Tasha's artificer list (Xanathar's/Tasha's spells) that the 2025 list
 //              doesn't show. Hidden by default: check with your DM before using them.
 const L = (name, level, school, flags = '') => ({ name, level, school, flags });
@@ -65,7 +67,14 @@ const LEGACY = [
 ];
 
 export const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-const tag = (src) => (s) => ({ ...s, id: slug(s.name), source: src });
+const EXTRA_BOOK = {
+  'Spirit Lantern': 'Arcana Unleashed', 'Distorted Distance': 'Arcana Unleashed', 'Uncertain Footing': 'Arcana Unleashed',
+  'Dueling Ground': 'Arcana Unleashed', 'Tortoise Shell': 'D&D Beyond Drops (June 2026)',
+  'Conjure Tools': 'D&D Beyond Drops (September 2026)', 'Quick Clothier': 'D&D Beyond Drops (September 2026)',
+};
+const tag = (src) => (s) => (EXTRA_BOOK[s.name]
+  ? { ...s, id: slug(s.name), source: 'extra', book: EXTRA_BOOK[s.name] }
+  : { ...s, id: slug(s.name), source: src });
 
 export const SPELLS = [
   ...LIST.map(tag('list')),
@@ -79,5 +88,6 @@ export const SOURCE_LABEL = {
   tinker: "Tinker's Magic",
   artillerist: 'Artillerist',
   legacy: "Tasha's 2020 list",
+  extra: 'Other official book',
 };
 export const SCHOOLS = [...new Set(SPELLS.map((s) => s.school))].sort();

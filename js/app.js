@@ -4,6 +4,7 @@ import {
   PROFICIENCIES, ARTILLERIST_PROFICIENCIES, FEATURES, USES, ARTILLERIST_SPELLS, cannonStats, SPECIES_SUGGESTIONS,
 } from './data/artificer.js';
 import { SPELLS, SOURCE_LABEL, SCHOOLS } from './data/spells.js';
+import { SPELL_DETAILS } from './data/spell-details.js';
 import { PLANS, PLAN_TYPES, TIERS } from './data/plans.js';
 import { FEATS, FEAT_CATEGORIES, FEAT_SOURCES } from './data/feats.js';
 import { WEAPONS, ARMOR } from './data/equipment.js';
@@ -12,6 +13,7 @@ import { KEY, load, save, uid, normalize, defaultState, backupFile, downloadFile
 let state = load();
 const view = document.getElementById('view');
 const openSessions = new Set();
+const openSpells = new Set();
 let journalQuery = '';
 let addMenuOpen = false;
 
@@ -654,11 +656,32 @@ function tabCombat() {
 }
 
 // ----- Spells
+function spellDesc(s) {
+  const d = SPELL_DETAILS[s.id];
+  if (!d) return '';
+  const cell = (l, v) => `<div><dt>${l}</dt><dd>${esc(v)}</dd></div>`;
+  const m = /^(Using a Higher-Level Spell Slot|Cantrip Upgrade):\s*(.*)$/.exec(d.higher || '');
+  const higher = !d.higher ? '' : `<p class="sd-higher">${m ? `<b>${esc(m[1])}:</b> ${esc(m[2])}` : esc(d.higher)}</p>`;
+  const url = (/https?:\/\/[^\s),;]+/.exec(d.source) || [''])[0];
+  const src = d.checked
+    ? `<span class="tag-s ok">SRD 5.2.1 ✓</span> <span class="muted">${esc(d.source)}</span>`
+    : `<span class="tag-s warn">Community source · unverified</span> ${url ? `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(url.replace(/^https?:\/\//, ''))}</a>` : `<span class="muted">${esc(d.source)}</span>`}`;
+  return `<details class="spell-desc" data-spell="${esc(s.id)}" ${openSpells.has(s.id) ? 'open' : ''}>
+    <summary>Description</summary>
+    <dl class="sd-grid">${cell('Casting time', d.time)}${cell('Range', d.range)}${cell('Components', d.components)}${cell('Duration', d.duration)}</dl>
+    <p class="sd-text">${esc(d.desc)}</p>
+    ${higher}
+    <p class="sd-src">${src}</p>
+    ${d.note ? `<p class="sd-note">${esc(d.note)}</p>` : ''}
+  </details>`;
+}
 function spellsList() {
   const f = F('spells');
   const list = SPELLS.filter((s) => {
     const st = spellStatus(s);
-    if (s.source === 'legacy' && !f.legacy) return false;
+    const chosen = st !== 'none'; // a spell you already selected stays visible whatever the toggles say
+    if (s.source === 'legacy' && !f.legacy && !chosen) return false;
+    if (s.source === 'extra' && !f.extra && !chosen) return false;
     if (s.source === 'artillerist' && st !== 'always' && !f.showLocked) return false;
     if (f.level !== undefined && f.level !== '' && String(s.level) !== String(f.level)) return false;
     if (f.status === 'selected' && !['always', 'prepared', 'known'].includes(st)) return false;
@@ -668,8 +691,8 @@ function spellsList() {
     if (f.school && s.school !== f.school) return false;
     if (f.conc && !s.flags.includes('C')) return false;
     if (f.ritual && !s.flags.includes('R')) return false;
-    if (!f.showLocked && !castable(s)) return false;
-    return matchQ('spells', s.name, s.school, SOURCE_LABEL[s.source], C().spellNotes[s.id]);
+    if (!f.showLocked && !castable(s) && !chosen) return false;
+    return matchQ('spells', s.name, s.school, SOURCE_LABEL[s.source], s.book, SPELL_DETAILS[s.id]?.desc, C().spellNotes[s.id]);
   }).sort((a, b) => a.level - b.level || a.name.localeCompare(b.name));
   if (!list.length) return '<p class="muted">No spell matches these filters.</p>';
   return list.map((s) => {
@@ -689,9 +712,10 @@ function spellsList() {
         <span class="tag-s">${esc(s.school)}</span>
         ${s.flags.includes('C') ? '<span class="tag-s c">Concentration</span>' : ''}
         ${s.flags.includes('R') ? '<span class="tag-s r">Ritual</span>' : ''}
-        <span class="tag-s src">${esc(SOURCE_LABEL[s.source])}</span>
+        <span class="tag-s src">${esc(s.book || SOURCE_LABEL[s.source])}</span>
         ${ok ? '' : `<span class="tag-s">needs level ${s.level} slots</span>`}
       </div>
+      ${spellDesc(s)}
       ${st !== 'none' ? `<input class="note" data-bind="character.spellNotes.${s.id}" value="${esc(C().spellNotes[s.id] || '')}" placeholder="Your notes (range, damage, reminders)">` : ''}
     </div>`;
   }).join('');
@@ -718,10 +742,11 @@ function tabSpells() {
         ${fcheck('spells', 'ritual', 'Ritual')}
         ${fcheck('spells', 'showLocked', 'Show spells above my level')}
         ${fcheck('spells', 'legacy', "Include Tasha's/Xanathar's legacy spells")}
+        ${fcheck('spells', 'extra', 'Include other official books (Arcana Unleashed, D&D Beyond Drops)')}
       </div>
     </div>
     <div id="list">${spellsList()}</div>
-    <p class="hint">The list follows the 2025 Forge of the Artificer Artificer, taken from a community transcription. "Legacy" spells were on the 2020 Tasha's Artificer list but aren't on the 2025 list: use them only if your DM agrees.</p>
+    <p class="hint">The list follows the 2025 Forge of the Artificer Artificer, taken from a community transcription. "Legacy" spells were on the 2020 Tasha's Artificer list but aren't on the 2025 list: use them only if your DM agrees. Spells from "other official books" are on the list but come from books outside the ones you play with. Spells you have selected always stay visible.</p>
   </section>`;
 }
 
@@ -1449,6 +1474,8 @@ view.addEventListener('change', (e) => {
   if (el.dataset.bind && (el.hasAttribute('data-rerender') || el.type === 'checkbox' || el.tagName === 'SELECT')) setTimeout(render, 0);
 });
 view.addEventListener('toggle', (e) => {
+  const sp = e.target.dataset?.spell;
+  if (sp) { if (e.target.open) openSpells.add(sp); else openSpells.delete(sp); return; }
   const id = e.target.dataset?.session;
   if (!id) return;
   if (e.target.open) openSessions.add(id); else openSessions.delete(id);

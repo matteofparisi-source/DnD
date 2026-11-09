@@ -39,7 +39,8 @@ Target devices: Android (Redmi 15, Chrome) and Windows 10/11 (Edge/Chrome). READ
   - per-level tables (`PLANS_KNOWN`, `MAGIC_ITEMS`, `CANTRIPS`, `PREPARED`, `SLOTS`) read with `at(arr, level)`
   - `FEATURES` (class plus Artillerist) and `USES` (tracked limited uses)
   - `ARTILLERIST_SPELLS`, `cannonStats()`, `attunementLimit()`, `maxSpellLevel()`, species suggestions
-- `js/data/spells.js`: `SPELLS` with `source`: `list` (2025 Artificer list), `tinker` (Mending), `artillerist`, `legacy` (2020 Tasha's list, hidden by default). Also exports `SOURCE_LABEL`, `SCHOOLS`, `slug`.
+- `js/data/spells.js`: `SPELLS` with `source`: `list` (2025 Artificer list), `tinker` (Mending), `artillerist`, `legacy` (2020 Tasha's list, hidden by default), `extra` (7 spells from books outside the user's set, with a `book` field, hidden by default). Selected spells always stay visible. Also exports `SOURCE_LABEL`, `SCHOOLS`, `slug`.
+- `js/data/spell-details.js`: `SPELL_DETAILS` keyed by spell id (`time`, `range`, `components`, `duration`, `desc`, `higher`, `source`, `checked`, `note`), generated once from researched JSON (the generator isn't kept; edit entries by hand). Shown in a collapsible `spell-desc` block on the Spells page (open state kept in `openSpells`) and searched by the spell filter.
 - `js/data/plans.js`: `PLANS` (Replicate Magic Item, tiers 2/6/10/14; `generic` = "any item of this kind"), `PLAN_TYPES`, `TIERS`.
 - `js/data/feats.js`: `FEATS` (PHB 2024, Tasha's, Xanathar's, Eberron) with a `req` object used by `meetsReq()` in app.js. Also exports `FEAT_CATEGORIES`, `FEAT_SOURCES`.
 - `js/data/equipment.js`: `WEAPONS` and `ARMOR` catalogs (armor has `str` and `stealth`) (SRD 5.2.1 tables, checked). Picking one in the Equipment tab prefills the item.
@@ -67,8 +68,9 @@ Target devices: Android (Redmi 15, Chrome) and Windows 10/11 (Edge/Chrome). READ
 - Add every new file the app loads to `ASSETS`, or it won't be available offline.
 
 ## Rules-accuracy policy
-- `js/data/equipment.js` and `CONDITION_EFFECTS` (rules.js) were checked against the official SRD 5.2.1 (CC-BY-4.0). `artificer.js`, `spells.js`, `plans.js` and `feats.js` are still unverified community data.
-- Apart from equipment.js, everything in `js/data/*.js` comes from community transcriptions (mainly dnd2024.wikidot.com) and guides (rpgbot.net, dungeonmister.com). **None of it was checked against the books.** Never describe it as verified, in code, UI text, docs or replies.
+- Checked against the official SRD 5.2.1 (CC-BY-4.0) on 2026-11-09: `js/data/equipment.js`, `CONDITION_EFFECTS` (rules.js), and the 82 `spell-details.js` entries with `checked: true`.
+- The other 36 spell descriptions (`checked: false`) are community data and the UI labels them so.
+- Everything else in `js/data/*.js` (`artificer.js`, `spells.js`, `plans.js`, `feats.js`) comes from community transcriptions (mainly dnd2024.wikidot.com) and guides (rpgbot.net, dungeonmister.com). **None of it was checked against the books.** Never describe it as verified, in code, UI text, docs or replies.
 - Never paste book text. Descriptions (`text`, `sum`) stay short and in your own words; full rules belong in the user's notes fields.
 - Known unverified data points:
   - whether the 2025 list really dropped the "legacy" spells
@@ -76,6 +78,7 @@ Target devices: Android (Redmi 15, Chrome) and Windows 10/11 (Edge/Chrome). READ
   - the species words used for Xanathar's racial-feat checks (e.g. treating Khoravar as half-elf)
   - Greater Dragonmark summaries (generic placeholders)
   - The Medium Armor Master DEX 16 condition (community sources, the feat isn't in the SRD)
+  - the source books of the 7 `extra` spells (Arcana Unleashed / D&D Beyond Drops, from wikidot and press articles)
 - When the user's book disagrees, the book wins: fix the data entry and mention it.
 
 ## Conventions seen in the code
