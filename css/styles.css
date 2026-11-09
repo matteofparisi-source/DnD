@@ -239,7 +239,7 @@ button, .button {
 }
 button:hover, .button:hover, button:active, .button:active { border-color: var(--gold); box-shadow: 0 0 10px var(--arcane-glow); }
 button:focus-visible, .button:focus-visible { outline: none; border-color: var(--arcane); box-shadow: 0 0 0 3px var(--arcane-glow); }
-button:disabled { opacity: .45; cursor: not-allowed; box-shadow: none; }
+button:disabled { opacity: .6; color: var(--ink-muted); cursor: not-allowed; box-shadow: none; }
 button.ghost { border: 1px dashed var(--gold); margin: 6px 6px 0 0; background: transparent; }
 button.danger { color: var(--wax); border-color: var(--wax); }
 button.ok { color: var(--verdigris); border-color: var(--verdigris); }
@@ -404,8 +404,120 @@ footer { text-align: center; font-size: .85rem; padding: 12px; color: var(--ink-
 .pill small { color: var(--ink-muted); }
 .cannon .field.xs { flex: 0 1 90px; }
 
+/* ---- Conditions & exhaustion ---- */
+.conds { display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+.cond {
+  --cc: var(--ink-muted);
+  flex-direction: column; align-items: flex-start; justify-content: flex-start; text-align: left; gap: 4px;
+  padding: 8px; border-radius: var(--radius); background: var(--vellum-2); border: 1px solid var(--line);
+  border-left: 3px solid var(--cc); letter-spacing: 0; font-size: .78rem; font-weight: 700; min-width: 0;
+}
+.cond-head { display: inline-flex; align-items: center; gap: 8px; color: var(--cc); }
+.cond .cn { color: var(--ink); }
+.cond .ce { font-family: "EB Garamond", Georgia, serif; font-weight: 400; font-size: .85rem; line-height: 1.3; letter-spacing: 0; color: var(--ink); }
+.cond.on {
+  border-color: var(--cc); background: var(--sel);
+  background: color-mix(in srgb, var(--cc) 16%, var(--vellum));
+  box-shadow: 0 0 10px var(--cc);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--cc) 55%, transparent);
+}
+.k-blinded { --cc: #6a55a8; } .k-charmed { --cc: #cc5c93; } .k-deafened { --cc: #7f8790; }
+.k-frightened { --cc: #c27a1c; } .k-grappled { --cc: #9a6a3a; } .k-incapacitated { --cc: #6f8396; }
+.k-invisible { --cc: #3a97ad; } .k-paralyzed { --cc: #c2a21d; } .k-petrified { --cc: #868686; }
+.k-poisoned { --cc: #3f9d4e; } .k-prone { --cc: #94703c; } .k-restrained { --cc: #b0562c; }
+.k-stunned { --cc: #d9822b; } .k-unconscious { --cc: #5568b0; }
+
+.xmeter { display: flex; gap: 4px; }
+.xseg { flex: 1 1 0; min-width: 0; padding: 0 4px; min-height: 40px; border-radius: 4px; background: var(--vellum-2); color: var(--ink-muted); }
+.xseg.on { color: #fff; text-shadow: 0 1px 1px rgba(0, 0, 0, .45); border-color: rgba(0, 0, 0, .25); }
+.xseg.s0.on { background: var(--sel); color: var(--ink); text-shadow: none; border-color: var(--gold); }
+.xseg.s1.on { background: #c8921a; } .xseg.s2.on { background: #c9741a; } .xseg.s3.on { background: #c25418; }
+.xseg.s4.on { background: #b03a18; } .xseg.s5.on { background: #962219; } .xseg.s6.on { background: #6a1010; }
+.xlabel { margin: 8px 0 0; }
+.xlabel.dead { color: var(--wax); font-weight: 700; font-family: "Cinzel", Georgia, serif; letter-spacing: .06em; }
+
+.status-strip { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 8px; }
+.status-chip {
+  --cc: var(--ink-muted);
+  min-height: 30px; padding: 3px 10px; border-radius: 999px; font-size: .74rem; gap: 6px; color: var(--ink);
+  border-color: var(--cc); background: var(--vellum);
+  background: color-mix(in srgb, var(--cc) 18%, var(--vellum));
+}
+.status-chip .ci { color: var(--cc); flex: 0 0 auto; }
+.status-chip.k-exhaustion { --cc: #b03a18; }
+.status-chip.k-exhaustion.x6 { --cc: var(--wax); color: var(--wax); }
+
+/* Global effects driven by classes that render() puts on <body>. Subtle and cheap: no blur filters. */
+body {
+  --vx: linear-gradient(transparent, transparent);
+  --vp: linear-gradient(transparent, transparent);
+  --vd: linear-gradient(transparent, transparent);
+}
+body::after {
+  content: ""; position: fixed; inset: 0; z-index: 4; pointer-events: none;
+  background: var(--vx), var(--vp), var(--vd);
+}
+body.exh-1 { --vx: radial-gradient(ellipse at center, transparent 62%, rgba(150, 30, 25, .10) 100%); }
+body.exh-2 { --vx: radial-gradient(ellipse at center, transparent 58%, rgba(150, 30, 25, .17) 100%); }
+body.exh-3 { --vx: radial-gradient(ellipse at center, transparent 54%, rgba(150, 30, 25, .24) 100%); }
+body.exh-4 { --vx: radial-gradient(ellipse at center, transparent 50%, rgba(150, 25, 20, .32) 100%); }
+body.exh-5 { --vx: radial-gradient(ellipse at center, transparent 46%, rgba(140, 20, 15, .40) 100%); }
+body.exh-6 { --vx: radial-gradient(ellipse at center, transparent 40%, rgba(120, 10, 10, .50) 100%); }
+body.cond-poisoned { --vp: radial-gradient(ellipse at center, transparent 55%, rgba(60, 160, 70, .16) 100%); }
+body.cond-blinded, body.cond-unconscious { --vd: radial-gradient(ellipse at center, transparent 45%, rgba(0, 0, 0, .38) 100%); }
+
+.cond-charmed .hero, .cond-paralyzed .hero, .cond-stunned .hero, .cond-petrified .hero, .cond-unconscious .hero, .cond-incapacitated .hero {
+  filter: grayscale(var(--hg, 0)) drop-shadow(0 0 var(--hs, 0px) var(--hc, transparent));
+}
+.cond-charmed .hero { --hs: 10px; --hc: rgba(226, 92, 150, .6); }
+.cond-paralyzed .hero, .cond-stunned .hero { --hg: .6; }
+.cond-petrified .hero { --hg: 1; }
+.cond-petrified .hero .chip { background-color: color-mix(in srgb, #8a8a8a 35%, var(--vellum)); }
+.cond-unconscious .hero { --hg: .5; opacity: .6; }
+.cond-incapacitated .hero { --hg: .35; opacity: .8; }
+.cond-invisible .hero h1, .cond-invisible .hero .chip { opacity: .55; animation: ghost 4s ease-in-out infinite; }
+.cond-restrained .hero-stats, .cond-grappled .hero-stats { border: 2px dashed var(--gold-bright); border-radius: 12px; padding: 4px; }
+.cond-prone .hero-stats .chip { transform: rotate(-3deg); }
+.cond-prone .hero-stats .chip:nth-child(even) { transform: rotate(3deg); }
+.status-chip.k-frightened { animation: tremble .35s linear infinite; }
+@keyframes tremble { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-1px); } 75% { transform: translateX(1px); } }
+@keyframes ghost { 0%, 100% { opacity: .45; } 50% { opacity: .65; } }
+
+/* ---- Combat extras ---- */
+.ac-line { margin: 0 0 8px; }
+.ac-big { font-family: "Cinzel", Georgia, serif; font-weight: 700; font-size: 1.5rem; margin-right: 6px; }
+.dmg-editor { margin: 6px 0; }
+.dmg-editor .lbl { font-family: "Cinzel", Georgia, serif; font-size: .7rem; color: var(--ink-muted); text-transform: uppercase; letter-spacing: .08em; display: block; }
+.dmg-row { display: flex; gap: 6px; align-items: center; margin: 4px 0; }
+.dmg-row input { flex: 1 1 0; min-width: 0; }
+.dmg-line { margin: 2px 0 0; overflow-wrap: anywhere; }
+.tag-s.mastery { font-style: italic; cursor: help; }
+.eq-attack .tags-row { margin-top: 4px; }
+
+.cannon-top { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: start; margin-bottom: 10px; }
+.cannon-left { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.cannon-left .counter { white-space: normal; border-radius: 12px; }
+.cannon-left button { width: 100%; text-align: center; line-height: 1.2; }
+.statcard {
+  min-width: 0; padding: 8px 10px; background: var(--sel); border: 2px solid var(--gold); border-radius: 3px 12px 3px 12px;
+  box-shadow: inset 0 0 0 2px var(--vellum), inset 0 0 0 3px var(--gold-bright), var(--edge-drop);
+}
+.statcard .sc-title { display: block; font-family: "Cinzel", Georgia, serif; color: var(--wax); font-size: .9rem; }
+.statcard .sc-sub { display: block; font-style: italic; color: var(--ink-muted); font-size: .85rem; margin-bottom: 4px; }
+.statcard dl { display: grid; grid-template-columns: auto 1fr; gap: 2px 8px; margin: 0; font-size: .92rem; }
+.statcard dt { font-family: "Cinzel", Georgia, serif; font-size: .7rem; letter-spacing: .06em; text-transform: uppercase; color: var(--gold-ink); padding-top: 3px; }
+.statcard dd { margin: 0; overflow-wrap: anywhere; }
+@media (max-width: 359px) { .cannon-top { grid-template-columns: 1fr; } }
+
+/* ---- Equipment ---- */
+.grp { margin: 14px 0 6px; }
+.subbox { border: 1px dashed var(--line); border-radius: var(--radius); padding: 4px 8px; margin: 6px 0; }
+.badge.fx { white-space: normal; border-color: var(--gold); color: var(--gold-ink); }
+.add-menu { margin-top: 6px; }
+
 /* ---- Reduced motion ---- */
 @media (prefers-reduced-motion: reduce) {
   .hero h1 { animation: none; background-position: 40% 50%; }
   button, .button { transition: none; }
+  .cond-invisible .hero h1, .cond-invisible .hero .chip, .status-chip.k-frightened { animation: none; }
 }

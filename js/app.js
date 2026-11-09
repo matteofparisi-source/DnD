@@ -1,4 +1,4 @@
-import { ABILITIES, SKILLS, ALIGNMENTS, CONDITIONS, DAMAGE_TYPES, WEAPON_MASTERIES, mod, profBonus, fmt } from './rules.js';
+import { ABILITIES, SKILLS, ALIGNMENTS, CONDITIONS, CONDITION_EFFECTS, DAMAGE_TYPES, WEAPON_MASTERIES, mod, profBonus, fmt } from './rules.js';
 import {
   PLANS_KNOWN, MAGIC_ITEMS, CANTRIPS, PREPARED, SLOTS, attunementLimit, maxSpellLevel, at, SKILL_CHOICES,
   PROFICIENCIES, ARTILLERIST_PROFICIENCIES, FEATURES, USES, ARTILLERIST_SPELLS, cannonStats, SPECIES_SUGGESTIONS,
@@ -6,12 +6,14 @@ import {
 import { SPELLS, SOURCE_LABEL, SCHOOLS } from './data/spells.js';
 import { PLANS, PLAN_TYPES, TIERS } from './data/plans.js';
 import { FEATS, FEAT_CATEGORIES, FEAT_SOURCES } from './data/feats.js';
-import { KEY, load, save, uid, normalize, defaultState, backupFile, downloadFile } from './store.js';
+import { WEAPONS, ARMOR } from './data/equipment.js';
+import { KEY, load, save, uid, normalize, defaultState, backupFile, downloadFile, newItem, newWeapon, ensureItemData } from './store.js';
 
 let state = load();
 const view = document.getElementById('view');
 const openSessions = new Set();
 let journalQuery = '';
+let addMenuOpen = false;
 
 // ---------- helpers ----------
 const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -74,6 +76,85 @@ const planKnown = (p) => (p.custom ? true : !!C().plans.known[p.id]);
 const knownPlans = () => [...PLANS.filter((p) => !p.generic && C().plans.known[p.id]), ...C().plans.custom];
 const replicated = () => C().items.filter((i) => i.origin === 'replicated');
 const attunedCount = () => C().items.filter((i) => i.attuned).length;
+const equippedItems = () => C().items.filter((i) => i.equipped);
+
+// Damage text such as "1d8 + 3 piercing + 2d4 fire". The flat bonus goes on the first component only.
+function dmgText(damages, flat = 0) {
+  const d = (damages || []).filter((x) => x.dice || x.type);
+  if (!d.length) return flat ? `${flat > 0 ? '+' : '−'} ${Math.abs(flat)}` : '—';
+  return d.map((x, i) => {
+    let t = x.dice || '—';
+    if (i === 0 && flat) t += ` ${flat > 0 ? '+' : '−'} ${Math.abs(flat)}`;
+    if (x.type) t += ` ${x.type.toLowerCase()}`;
+    return i ? `+ ${t}` : t;
+  }).join(' ');
+}
+const FIREARM_NOTE = ' (+1d8 on Artificer spells cast through it)';
+
+// Weapon attack numbers for an item of type Weapon.
+function weaponStats(it) {
+  ensureItemData(it);
+  const w = it.weapon || newWeapon();
+  const m = w.range === 'ranged' ? am('dex') : (w.finesse ? Math.max(am('str'), am('dex')) : am('str'));
+  const prof = w.category === 'simple' || hasFeat('martial-weapon-training') || (w.range === 'ranged' && lvl() >= 3);
+  const bonus = num(w.bonus);
+  const hit = m + (prof ? pb() : 0) + bonus;
+  const dmg = dmgText(w.damages, m + bonus) + (w.firearm && lvl() >= 5 ? FIREARM_NOTE : '');
+  return { hit, dmg, prof };
+}
+
+// Armor Class from equipped items (or the manual value when "auto" is off).
+function acInfo() {
+  const c = C();
+  if (!c.acAuto) return { ac: num(c.ac), text: '', warns: [] };
+  const eq = equippedItems();
+  eq.forEach(ensureItemData);
+  const armors = eq.filter((i) => i.type === 'Armor');
+  const shields = eq.filter((i) => i.type === 'Shield');
+  const dex = am('dex');
+  const parts = []; // [label, value]
+  const armor = armors[0];
+  if (armor) {
+    const a = armor.armor || {};
+    const cap = hasFeat('medium-armor-master') && num(c.abilities.dex) >= 16 ? 3 : 2; // feat cap: community sources
+    const dexPart = a.armorType === 'heavy' ? 0 : a.armorType === 'medium' ? Math.min(dex, cap) : dex;
+    parts.push([a.base || armor.name || 'Armor', num(a.baseAC) + num(a.bonus)]);
+    if (a.armorType !== 'heavy') parts.push(['DEX', dexPart]);
+  } else parts.push(['Unarmored', 10], ['DEX', dex]);
+  // Only one armor and one shield can be worn at a time (SRD 5.2.1 p.92): the first of each counts.
+  if (shields[0]) parts.push(['Shield', 2 + num(shields[0].shield?.bonus)]);
+  for (const i of eq) {
+    if (num(i.acBonus) && (!i.needsAttune || i.attuned)) parts.push([i.name || 'Item', num(i.acBonus)]);
+  }
+  if (num(c.acMisc)) parts.push(['Other', num(c.acMisc)]);
+  const ac = parts.reduce((s, p) => s + p[1], 0);
+  const text = parts.map((p, i) => (i === 0 ? `${p[0]} ${p[1]}` : `${p[1] < 0 ? '−' : '+'} ${p[0]} ${Math.abs(p[1])}`)).join(' ') + ` = ${ac}`;
+  const warns = [];
+  if (armor?.armor?.armorType === 'heavy') warns.push("Artificers aren't trained in heavy armor (Disadvantage on D20 Tests using STR or DEX, can't cast spells).");
+  if (armor && num(armor.armor?.str) > num(c.abilities.str)) warns.push(`Speed −10 ft (needs STR ${num(armor.armor.str)}).`);
+  if (armor?.armor?.stealth) warns.push('Disadvantage on Stealth checks.');
+  if (armors.length > 1 || shields.length > 1) warns.push('More than one armor or shield is equipped: only the first of each counts.');
+  return { ac, text, warns };
+}
+
+function itemEffect(it) {
+  ensureItemData(it);
+  if (it.type === 'Weapon') {
+    const s = weaponStats(it);
+    return `${fmt(s.hit)} to hit · ${s.dmg}${s.prof ? '' : ' · not proficient'}`;
+  }
+  if (it.type === 'Armor') {
+    const a = it.armor || {};
+    const dex = a.armorType === 'heavy' ? '' : a.armorType === 'medium' ? ' + DEX (max 2)' : ' + DEX';
+    return `AC ${num(a.baseAC) + num(a.bonus)}${dex}`;
+  }
+  if (it.type === 'Shield') return `${fmt(2 + num(it.shield?.bonus))} AC`;
+  return '';
+}
+const carriedWeight = () => {
+  const coins = Object.values(C().coins).reduce((s, n) => s + num(n), 0);
+  return C().items.reduce((s, i) => s + num(i.qty) * num(i.weight), 0) + coins / 50;
+};
 
 const featById = (id) => FEATS.find((f) => f.id === id);
 const hasFeat = (id) => C().feats.some((f) => f.featId === id);
@@ -124,7 +205,11 @@ function calc(key) {
     case 'subtitle': return [`Artificer${lvl() >= 3 ? ' (Artillerist)' : ''} ${lvl()}`, c.species].filter(Boolean).join(' · ');
     case 'hp': return `${c.hp.current}${num(c.hp.temp) ? ` +${c.hp.temp}` : ''} / ${maxHP()}`;
     case 'hpPct': return String(Math.max(0, Math.min(100, (num(c.hp.current) / Math.max(1, maxHP())) * 100)));
-    case 'ac': return String(num(c.ac));
+    case 'ac': return String(acInfo().ac);
+    case 'acText': return acInfo().text;
+    case 'iatk': { const i = c.items.find((x) => x.id === arg); return i ? fmt(weaponStats(i).hit) : ''; }
+    case 'idmg': { const i = c.items.find((x) => x.id === arg); return i ? weaponStats(i).dmg : ''; }
+    case 'itemfx': { const i = c.items.find((x) => x.id === arg); return i ? itemEffect(i) : ''; }
     case 'dc': return String(spellDC());
     case 'satk': return fmt(spellAtk());
     case 'autoHP': return String(autoMaxHP());
@@ -132,8 +217,8 @@ function calc(key) {
     case 'dmg': { const a = c.attacks.find((x) => x.id === arg); return a ? attackParts(a).dmg : ''; }
     case 'exhaustion': {
       const e = num(c.exhaustion);
-      if (!e) return '';
-      return e >= 6 ? 'Exhaustion 6: you die.' : `Exhaustion ${e}: −${2 * e} to all D20 Tests, −${5 * e} ft Speed.`;
+      if (!e) return 'No exhaustion.';
+      return e >= 6 ? 'Death: Exhaustion 6 is fatal.' : `Exhaustion ${e}: −${2 * e} to all D20 Tests, −${5 * e} ft Speed.`;
     }
     default: return '';
   }
@@ -142,7 +227,7 @@ function attackParts(a) {
   const m = a.ability ? am(a.ability) : 0;
   const hit = m + (a.proficient ? pb() : 0) + num(a.bonus);
   const dmgMod = (a.addMod ? m : 0) + num(a.dmgBonus);
-  const dmg = `${a.damage || '—'}${dmgMod ? ` ${dmgMod > 0 ? '+' : '−'} ${Math.abs(dmgMod)}` : ''}${a.firearm ? ' (+1d8 Arcane Firearm on spells)' : ''}${a.damageType ? ` ${a.damageType.toLowerCase()}` : ''}`;
+  const dmg = dmgText(a.damages, dmgMod) + (a.firearm && lvl() >= 5 ? FIREARM_NOTE : '');
   return { hit, dmg };
 }
 function refreshDerived() {
@@ -228,7 +313,7 @@ const lvlTag = (l) => `<span class="lvl lvl${l}">${l === 0 ? 'Cantrip' : `Lv ${l
 
 // ---------- tabs ----------
 const TABS = [
-  ['stats', 'Stats'], ['combat', 'Combat'], ['spells', 'Spells'], ['plans', 'Plans'], ['items', 'Magic items'],
+  ['stats', 'Stats'], ['combat', 'Combat'], ['equipment', 'Equipment & bag'], ['spells', 'Spells'], ['plans', 'Plans'], ['items', 'Magic items'],
   ['feats', 'Feats'], ['selected', '★ Selected'], ['journal', 'Journal'], ['data', 'Campaign & data'],
 ];
 
@@ -249,8 +334,45 @@ function header() {
       <button data-action="shortRest">Short rest</button>
       <button data-action="longRest">Long rest</button>
     </div>
-    <p class="warn" data-show-if="exhaustion" ${calc('exhaustion') ? '' : 'hidden'}>${calcSpan('exhaustion')}</p>
   </header>`;
+}
+
+// Small line icons (24x24 grid, drawn at 20px) for the 14 conditions.
+const COND_ICONS = {
+  Blinded: '<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/><path d="M4 4l16 16"/>',
+  Charmed: '<path d="M12 20s-8-5-8-11a4.5 4.5 0 0 1 8-2.8A4.5 4.5 0 0 1 20 9c0 6-8 11-8 11z"/>',
+  Deafened: '<path d="M7 9a5 5 0 0 1 10 0c0 3-3 4-3 7a2.5 2.5 0 0 1-5 0"/><path d="M10 9a2 2 0 0 1 4 0"/><path d="M4 4l16 16"/>',
+  Frightened: '<path d="M12 3v11"/><circle cx="12" cy="19" r="1.2"/><path d="M5 6l2.5 2M19 6l-2.5 2M3 12h3M18 12h3"/>',
+  Grappled: '<path d="M8 13V6.5a1.5 1.5 0 0 1 3 0V11M11 11V4.5a1.5 1.5 0 0 1 3 0V11M14 11V6.5a1.5 1.5 0 0 1 3 0V14c0 4-2 7-6 7-3 0-4.5-2-6-4.5L4 13.5a1.5 1.5 0 0 1 2.5-1.5L8 13.5"/>',
+  Incapacitated: '<path d="M5 8a8 8 0 0 1 8-5"/><path d="M19 8a8 8 0 0 1-1 10"/><path d="M5 16a8 8 0 0 0 7 5"/>',
+  Invisible: '<g stroke-dasharray="2.5 2.5"><circle cx="12" cy="7" r="3.5"/><path d="M5 21v-3a5 5 0 0 1 5-5h4a5 5 0 0 1 5 5v3"/></g>',
+  Paralyzed: '<path d="M12 2L5 12h5l-1 7 7-10h-5z"/><rect x="16" y="15" width="6" height="6" rx="1"/><path d="M17.5 15v-1.5a1.5 1.5 0 0 1 3 0V15"/>',
+  Petrified: '<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M12 12l8-4.5M12 12L4 7.5M12 12v9"/>',
+  Poisoned: '<path d="M9 3h6M10 3v6L4.5 19a1.5 1.5 0 0 0 1.3 2h12.4a1.5 1.5 0 0 0 1.3-2L14 9V3"/><path d="M7.5 15h9"/><circle cx="11" cy="18" r=".6"/>',
+  Prone: '<circle cx="5" cy="14" r="2"/><path d="M8 15h12M14 15l2 4M11 15l-1 4M3 21h18"/>',
+  Restrained: '<rect x="2.5" y="8.5" width="11" height="7" rx="3.5" transform="rotate(-20 8 12)"/><rect x="10.5" y="8.5" width="11" height="7" rx="3.5" transform="rotate(-20 16 12)"/>',
+  Stunned: '<path d="M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/><path d="M5 16l.6 1.6L7 18l-1.4.4L5 20l-.6-1.6L3 18l1.4-.4z"/>',
+  Unconscious: '<path d="M3 13c3 4 15 4 18 0"/><path d="M8 17l-1 2M12 18v2.5M16 17l1 2"/><path d="M14 3h4l-4 5h4"/>',
+};
+const condIcon = (name) => `<svg class="ci" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${COND_ICONS[name] || ''}</svg>`;
+const condKey = (name) => String(name).toLowerCase().replace(/[^a-z]/g, '');
+
+// Strip under the header: active conditions and exhaustion, visible on every tab.
+function statusStrip() {
+  const c = C();
+  const e = Math.min(6, num(c.exhaustion));
+  const chips = c.conditions.map((n) => `<button class="status-chip k-${condKey(n)}" data-action="tab" data-key="combat" title="${esc(CONDITION_EFFECTS[n] || n)}">${condIcon(n)}<span>${esc(n)}</span></button>`);
+  if (e) chips.unshift(`<button class="status-chip k-exhaustion x${e}" data-action="tab" data-key="combat" title="${esc(calc('exhaustion'))}">${e >= 6 ? 'Death (Exhaustion 6)' : `Exhaustion ${e}`}</button>`);
+  return chips.length ? `<div class="status-strip" aria-label="Active conditions">${chips.join('')}</div>` : '';
+}
+
+// Classes on <body> let the stylesheet show conditions and exhaustion on every tab.
+function applyBodyFx() {
+  const cl = document.body.classList;
+  [...cl].filter((x) => /^(cond|exh)-/.test(x)).forEach((x) => cl.remove(x));
+  C().conditions.filter((n) => CONDITIONS.includes(n)).forEach((n) => cl.add(`cond-${condKey(n)}`));
+  const e = Math.min(6, num(C().exhaustion));
+  if (e > 0) cl.add(`exh-${e}`);
 }
 
 // ----- Stats
@@ -332,6 +454,17 @@ function tabStats() {
 }
 
 // ----- Combat
+// Rows of [dice][type][remove] for a list of damage components; `path` is the owner (attack or weapon) path.
+function damageEditor(path, damages) {
+  const rows = (damages || []).map((d) => `
+    <div class="dmg-row">
+      ${input(`${path}.damages.#${d.id}.dice`, { placeholder: 'Dice (1d8)' })}
+      ${input(`${path}.damages.#${d.id}.type`, { placeholder: 'Type', list: 'dl-dmg' })}
+      <button class="icon danger" data-action="removeDamage" data-path="${esc(path)}.damages" data-id="${esc(d.id)}" title="Remove damage" aria-label="Remove damage">✕</button>
+    </div>`).join('');
+  return `<div class="dmg-editor"><span class="lbl">Damage</span>${rows}<button class="ghost small" data-action="addDamage" data-path="${esc(path)}.damages">+ Add damage</button></div>`;
+}
+
 function cannonPanel() {
   const c = C();
   if (lvl() < 3) return '<section class="card"><h2>Eldritch Cannon</h2><p class="muted">Unlocks at Artificer level 3 (Artillerist).</p></section>';
@@ -342,21 +475,31 @@ function cannonPanel() {
       <div class="row tight">
         <b class="grow">Cannon ${i + 1}</b>
         <span class="badge">AC ${st.ac}</span>
-        <label class="field xs"><span>HP / ${st.hp}</span><input type="number" inputmode="numeric" data-bind="character.cannons.#${k.id}.hp" data-type="number" value="${esc(k.hp)}"></label>
-        ${lvl() >= 9 ? `<button class="danger small" data-action="detonate" data-id="${k.id}">Detonate</button>` : ''}
-        <button class="small" data-action="dismissCannon" data-id="${k.id}">Dismiss</button>
+        <label class="field xs"><span>HP / ${st.hp}</span><input type="number" inputmode="numeric" data-bind="character.cannons.#${esc(k.id)}.hp" data-type="number" value="${esc(k.hp)}"></label>
+        ${lvl() >= 9 ? `<button class="danger small" data-action="detonate" data-id="${esc(k.id)}">Detonate</button>` : ''}
+        <button class="small" data-action="dismissCannon" data-id="${esc(k.id)}">Dismiss</button>
       </div>
     </div>`).join('');
   return `
   <section class="card">
     <h2>Eldritch Cannon</h2>
-    <div class="row">
-      <span class="counter">Free creations left: <b>${Math.max(0, free)} / ${usesMax('cannon')}</b></span>
-      <span class="counter">Active: <b>${c.cannons.length} / ${st.count}</b></span>
-    </div>
-    <div class="row">
-      <button class="ok" data-action="createCannon" data-key="free" ${free > 0 && c.cannons.length < st.count ? '' : 'disabled'}>Create (free)</button>
-      <button data-action="createCannon" data-key="slot" ${c.cannons.length < st.count ? '' : 'disabled'}>Create with a spell slot</button>
+    <div class="cannon-top">
+      <div class="cannon-left">
+        <span class="counter">Free creations left: <b>${Math.max(0, free)} / ${usesMax('cannon')}</b></span>
+        <span class="counter">Active: <b>${c.cannons.length} / ${st.count}</b></span>
+        <button class="ok" data-action="createCannon" data-key="free" ${free > 0 && c.cannons.length < st.count ? '' : 'disabled'}>Create (free)</button>
+        <button data-action="createCannon" data-key="slot" ${c.cannons.length < st.count ? '' : 'disabled'}>Create with a spell slot</button>
+      </div>
+      <div class="statcard" aria-label="Cannon stats">
+        <b class="sc-title">Eldritch Cannon</b>
+        <span class="sc-sub">Small or Tiny object</span>
+        <dl>
+          <dt>HP</dt><dd>${st.hp} <small>(5 × level)</small></dd>
+          <dt>AC</dt><dd>${st.ac}</dd>
+          <dt>Immune</dt><dd>Poison, Psychic</dd>
+          <dt>Mending</dt><dd>restores 2d6 HP</dd>
+        </dl>
+      </div>
     </div>
     ${cannons || '<p class="muted">No cannon deployed. Creating one takes a Magic action with Smith\'s or Woodcarver\'s Tools; it lasts 1 hour or until 0 HP.</p>'}
     <table class="ref">
@@ -367,13 +510,54 @@ function cannonPanel() {
       ${st.detonate ? `<tr><td><b>Detonate</b> (Reaction when it takes damage)</td><td>20 ft: DEX save DC ${spellDC()}, ${st.detonate}, half on success</td></tr>` : ''}
       ${lvl() >= 15 ? '<tr><td><b>Fortified Position</b></td><td>Two cannons, one Bonus Action activates both; Half Cover within 10 ft of a cannon</td></tr>' : ''}
     </table>
-    <p class="hint">HP ${st.hp} (5 × level), AC ${st.ac}, immune to Poison and Psychic damage. Mending restores 2d6 HP.</p>
   </section>`;
+}
+
+function exhaustionMeter() {
+  const e = Math.min(6, num(C().exhaustion));
+  const segs = [1, 2, 3, 4, 5, 6].map((n) => `<button class="xseg s${n} ${n <= e ? 'on' : ''}" data-action="setExhaustion" data-n="${n}" aria-label="Exhaustion ${n}" aria-pressed="${n <= e}">${n}</button>`).join('');
+  return `
+    <div class="xmeter">
+      <button class="xseg s0 ${e === 0 ? 'on' : ''}" data-action="setExhaustion" data-n="0" aria-label="No exhaustion">0</button>${segs}
+    </div>
+    <p class="xlabel ${e >= 6 ? 'dead' : ''}">${calcSpan('exhaustion')}</p>`;
+}
+
+function conditionButtons() {
+  return CONDITIONS.map((name) => {
+    const on = C().conditions.includes(name);
+    const fx = CONDITION_EFFECTS[name] || '';
+    return `<button class="cond k-${condKey(name)} ${on ? 'on' : ''}" data-action="toggleCondition" data-key="${name}" aria-pressed="${on}" title="${esc(fx)}">
+      <span class="cond-head">${condIcon(name)}<span class="cn">${esc(name)}</span></span>${on ? `<small class="ce">${esc(fx)}</small>` : ''}
+    </button>`;
+  }).join('');
+}
+
+function equipmentAttacks() {
+  const list = equippedItems().filter((i) => i.type === 'Weapon');
+  if (!list.length) return '<p class="muted">No weapon is equipped. Equip one on the Equipment tab and it shows up here.</p>';
+  return list.map((i) => {
+    ensureItemData(i);
+    const w = i.weapon;
+    const s = weaponStats(i);
+    return `<div class="item eq-attack">
+      <div class="row tight">
+        <b class="grow">${esc(i.name || w.base || 'Weapon')}</b>
+        <span class="badge">${calcSpan(`iatk:${i.id}`)} to hit</span>
+        <button class="small" data-action="tab" data-key="equipment" title="Edit on the Equipment tab">Equipment</button>
+      </div>
+      <div class="row tight tags-row">
+        <span class="muted">Damage: ${calcSpan(`idmg:${i.id}`)}</span>
+        ${w.props ? `<span class="tag-s">${esc(w.props)}</span>` : ''}
+        ${w.mastery ? `<span class="tag-s mastery" title="Needs Weapon Mastery (Artificers don't have it) or the Weapon Master feat">${esc(w.mastery)}</span>` : ''}
+        ${s.prof ? '' : '<span class="tag-s c">not proficient</span>'}
+      </div>
+    </div>`;
+  }).join('');
 }
 
 function tabCombat() {
   const c = C();
-  const conds = CONDITIONS.map((name) => `<button class="tag ${c.conditions.includes(name) ? 'on' : ''}" data-action="toggleCondition" data-key="${name}">${name}</button>`).join('');
   const hdLeft = Math.max(0, lvl() - num(c.hdUsed));
   const slots = SLOTS[lvl() - 1].map((n, i) => `<div class="slot"><span class="slot-lvl">${i + 1}</span>${pips(`character.slotsUsed.${i}`, n, num(c.slotsUsed[i]), `level ${i + 1} slot`)}</div>`).join('');
   const quickUses = Object.keys(USES).filter((k) => usesMax(k)).map((k) => `<li><span class="grow">${esc(USES[k].name)}</span>${pips(`character.uses.${k}`, usesMax(k), num(c.uses[k]), USES[k].name)}</li>`).join('');
@@ -382,24 +566,24 @@ function tabCombat() {
       <div class="item-head">
         ${input(`character.attacks.#${a.id}.name`, { placeholder: 'Weapon or attack' })}
         <span class="badge">${calcSpan(`atk:${a.id}`)} to hit</span>
-        <button class="icon danger" data-action="removeAttack" data-id="${a.id}" title="Delete">✕</button>
+        <button class="icon danger" data-action="removeAttack" data-id="${esc(a.id)}" title="Delete">✕</button>
       </div>
       <div class="row">
         ${select(`character.attacks.#${a.id}.ability`, abilityOptions, { label: 'Ability', cls: 'xs' })}
         ${input(`character.attacks.#${a.id}.bonus`, { label: 'Hit bonus', type: 'number', cls: 'xs' })}
-        ${input(`character.attacks.#${a.id}.damage`, { label: 'Damage dice', placeholder: '1d8', cls: 'sm' })}
         ${input(`character.attacks.#${a.id}.dmgBonus`, { label: 'Dmg bonus', type: 'number', cls: 'xs' })}
-        ${input(`character.attacks.#${a.id}.damageType`, { label: 'Type', list: 'dl-dmg', cls: 'sm' })}
         ${input(`character.attacks.#${a.id}.mastery`, { label: 'Mastery', list: 'dl-mastery', cls: 'sm' })}
         ${input(`character.attacks.#${a.id}.notes`, { label: 'Range / properties', cls: 'grow' })}
       </div>
+      ${damageEditor(`character.attacks.#${a.id}`, a.damages)}
       <div class="row">
         ${check(`character.attacks.#${a.id}.proficient`, 'Proficient')}
-        ${check(`character.attacks.#${a.id}.addMod`, 'Add ability mod to damage')}
+        ${check(`character.attacks.#${a.id}.addMod`, 'Add ability mod to damage (first component)')}
         ${lvl() >= 5 ? check(`character.attacks.#${a.id}.firearm`, 'Arcane Firearm') : ''}
-        <span class="muted">Damage: ${calcSpan(`dmg:${a.id}`)}</span>
       </div>
+      <p class="muted dmg-line">Damage: ${calcSpan(`dmg:${a.id}`)}</p>
     </div>`).join('');
+  const ai = acInfo();
 
   return `
   <div class="two-col">
@@ -428,20 +612,25 @@ function tabCombat() {
     </section>
     <section class="card">
       <h2>Defense</h2>
-      <div class="grid three">
-        ${input('character.ac', { label: 'Armor Class', type: 'number' })}
+      <p class="ac-line"><span class="ac-big">AC ${calcSpan('ac')}</span> <small class="muted" data-calc="acText">${esc(calc('acText'))}</small></p>
+      ${ai.warns.map((w) => `<p class="warn">${esc(w)}</p>`).join('')}
+      ${check('character.acAuto', 'Auto AC from equipment', { rerender: true })}
+      ${c.acAuto ? '' : '<p class="hint">Turn on Auto AC to calculate it from your equipped armor and shield.</p>'}
+      <div class="grid">
+        ${c.acAuto ? input('character.acMisc', { label: 'Other AC bonus', type: 'number' }) : input('character.ac', { label: 'Armor Class', type: 'number' })}
         ${input('character.speed', { label: 'Speed (ft)', type: 'number' })}
         ${input('character.initBonus', { label: 'Init bonus', type: 'number' })}
       </div>
       <p class="hint">Initiative ${calcSpan('init')} (DEX + bonus; Alert feat: add your Proficiency Bonus).</p>
-      <div class="row">
-        ${check('character.inspiration', 'Heroic Inspiration')}
-        ${select('character.exhaustion', [0, 1, 2, 3, 4, 5, 6].map((n) => [n, `Exhaustion ${n}`]), { type: 'number' })}
-      </div>
-      <h3>Conditions</h3>
-      <div class="tags">${conds}</div>
     </section>
   </div>
+  <section class="card">
+    <h2>Exhaustion & conditions</h2>
+    <h3>Exhaustion</h3>
+    ${exhaustionMeter()}
+    <h3>Conditions</h3>
+    <div class="conds">${conditionButtons()}</div>
+  </section>
   ${cannonPanel()}
   <div class="two-col">
     <section class="card">
@@ -456,7 +645,10 @@ function tabCombat() {
   </div>
   <section class="card">
     <h2>Weapons & attacks</h2>
-    ${attacks || '<p class="muted">No attacks yet.</p>'}
+    <h3>From equipment</h3>
+    ${equipmentAttacks()}
+    <h3>Custom attacks</h3>
+    ${attacks || '<p class="muted">No custom attacks yet.</p>'}
     <button class="ghost" data-action="addAttack">+ Add attack</button>
   </section>`;
 }
@@ -485,7 +677,7 @@ function spellsList() {
     const ok = castable(s);
     const btn = st === 'always'
       ? '<button class="small" disabled>Always</button>'
-      : `<button class="small ${st === 'none' ? '' : 'ok'}" data-action="toggleSpell" data-id="${s.id}" ${ok ? '' : 'disabled'}>${st === 'none' ? (s.level ? 'Prepare' : 'Learn') : (s.level ? 'Unprepare' : 'Forget')}</button>`;
+      : `<button class="small ${st === 'none' ? '' : 'ok'}" data-action="toggleSpell" data-id="${esc(s.id)}" ${ok ? '' : 'disabled'}>${st === 'none' ? (s.level ? 'Prepare' : 'Learn') : (s.level ? 'Unprepare' : 'Forget')}</button>`;
     return `<div class="item spell ${st !== 'none' ? 'sel' : ''} ${ok ? '' : 'locked'}">
       <div class="row tight">
         ${lvlTag(s.level)}
@@ -554,10 +746,10 @@ function plansList() {
     const avail = p.tier <= lvl();
     const made = C().items.filter((i) => i.planId === p.id).length;
     let actions;
-    if (p.generic) actions = `<button class="small" data-action="learnGeneric" data-id="${p.id}" ${avail ? '' : 'disabled'}>+ Learn an item</button>`;
+    if (p.generic) actions = `<button class="small" data-action="learnGeneric" data-id="${esc(p.id)}" ${avail ? '' : 'disabled'}>+ Learn an item</button>`;
     else actions = `
-      ${known ? `<button class="small ok" data-action="craft" data-id="${p.id}">Create</button>` : ''}
-      <button class="small ${known ? '' : 'ok'}" data-action="togglePlan" data-id="${p.id}" ${avail || known ? '' : 'disabled'}>${known ? (p.custom ? 'Remove' : 'Forget') : 'Learn'}</button>`;
+      ${known ? `<button class="small ok" data-action="craft" data-id="${esc(p.id)}">Create</button>` : ''}
+      <button class="small ${known ? '' : 'ok'}" data-action="togglePlan" data-id="${esc(p.id)}" ${avail || known ? '' : 'disabled'}>${known ? (p.custom ? 'Remove' : 'Forget') : 'Learn'}</button>`;
     return `<div class="item ${known && !p.generic ? 'sel' : ''} ${avail ? '' : 'locked'}">
       <div class="row tight">
         <span class="lvl">L${p.tier}+</span>
@@ -598,12 +790,140 @@ function tabPlans() {
   </section>`;
 }
 
+// ----- Equipment & bag
+const ITEM_TYPES = ['Armor', 'Shield', 'Weapon', 'Wand', 'Ring', 'Wondrous', 'Potion', 'Scroll', 'Staff', 'Rod', 'Other'];
+const catalogSelect = (path, names, id, kind) => `<select data-bind="${esc(path)}" data-catalog="${kind}" data-id="${esc(id)}">${['', ...names].map((n) => `<option value="${esc(n)}" ${n === String(getPath(path) ?? '') ? 'selected' : ''}>${n ? esc(n) : '— choose from the list —'}</option>`).join('')}</select>`;
+
+function weaponFields(i, p) {
+  const w = i.weapon;
+  const wp = `${p}.weapon`;
+  return `
+    <div class="subbox">
+      <div class="row">
+        <label class="field sm"><span>Base weapon</span>${catalogSelect(`${wp}.base`, WEAPONS.map((x) => x.name), i.id, 'weapon')}</label>
+        ${select(`${wp}.category`, [['simple', 'Simple'], ['martial', 'Martial']], { label: 'Category', cls: 'sm' })}
+        ${select(`${wp}.range`, [['melee', 'Melee'], ['ranged', 'Ranged']], { label: 'Range', cls: 'xs' })}
+        ${input(`${wp}.bonus`, { label: 'Magic bonus (+N)', type: 'number', cls: 'xs' })}
+      </div>
+      <div class="row">
+        ${check(`${wp}.finesse`, 'Finesse')}
+        ${check(`${wp}.thrown`, 'Thrown')}
+        ${lvl() >= 5 ? check(`${wp}.firearm`, 'Arcane Firearm') : ''}
+      </div>
+      <div class="row">
+        ${input(`${wp}.props`, { label: 'Properties', cls: 'grow' })}
+        ${input(`${wp}.mastery`, { label: 'Mastery', list: 'dl-mastery', cls: 'sm' })}
+      </div>
+      ${damageEditor(wp, w.damages)}
+    </div>`;
+}
+function armorFields(i, p) {
+  const ap = `${p}.armor`;
+  return `
+    <div class="subbox">
+      <div class="row">
+        <label class="field sm"><span>Base armor</span>${catalogSelect(`${ap}.base`, ARMOR.map((x) => x.name), i.id, 'armor')}</label>
+        ${select(`${ap}.armorType`, [['light', 'Light'], ['medium', 'Medium'], ['heavy', 'Heavy']], { label: 'Type', cls: 'xs', rerender: true })}
+        ${input(`${ap}.baseAC`, { label: 'Base AC', type: 'number', cls: 'xs' })}
+        ${input(`${ap}.bonus`, { label: 'Magic bonus (+N)', type: 'number', cls: 'xs' })}
+        ${input(`${ap}.str`, { label: 'STR needed', type: 'number', min: 0, cls: 'xs' })}
+      </div>
+      <div class="row">${check(`${ap}.stealth`, 'Disadvantage on Stealth')}</div>
+    </div>`;
+}
+
+function equipCard(i) {
+  ensureItemData(i);
+  const p = `character.items.#${i.id}`;
+  const fx = itemEffect(i);
+  return `<div class="item ${i.equipped ? 'sel' : ''}">
+    <div class="item-head">
+      ${input(`${p}.name`, { placeholder: 'Item name' })}
+      <button class="icon danger" data-action="removeItem" data-id="${esc(i.id)}" title="Delete">✕</button>
+    </div>
+    <div class="row tight tags-row">
+      ${i.type === 'Armor' && i.armor.str ? `<span class="tag-s">STR ${esc(i.armor.str)}</span>` : ''}
+      ${i.type === 'Armor' && i.armor.stealth ? '<span class="tag-s c">Stealth disadv.</span>' : ''}
+      ${fx ? `<span class="badge fx" data-calc="itemfx:${esc(i.id)}">${esc(fx)}</span>` : ''}
+      ${i.attuned ? '<span class="flag always">Attuned</span>' : ''}
+      ${i.needsAttune && !i.attuned ? '<span class="flag none">Needs attunement</span>' : ''}
+      ${i.rarity === 'Mundane' ? '' : `<span class="tag-s src">${esc(i.rarity)}</span>`}
+    </div>
+    <div class="row">
+      ${input(`${p}.qty`, { label: 'Qty', type: 'number', min: 0, cls: 'xs' })}
+      ${input(`${p}.weight`, { label: 'Weight (lb each)', type: 'number', min: 0, cls: 'xs' })}
+      ${select(`${p}.type`, ITEM_TYPES, { label: 'Type', cls: 'sm', rerender: true })}
+      ${select(`${p}.rarity`, RARITIES, { label: 'Rarity', cls: 'sm', rerender: true })}
+    </div>
+    ${i.type === 'Weapon' ? weaponFields(i, p) : i.type === 'Armor' ? armorFields(i, p) : i.type === 'Shield' ? `<div class="subbox"><div class="row">${input(`${p}.shield.bonus`, { label: 'Magic bonus (+N; base +2 AC is automatic)', type: 'number', cls: 'sm' })}</div></div>` : ''}
+    <div class="row">
+      ${check(`${p}.equipped`, i.type === 'Weapon' ? 'Equipped (wielded / carried ready)' : 'Equipped', { rerender: true })}
+      ${check(`${p}.needsAttune`, 'Requires attunement', { rerender: true })}
+      ${i.needsAttune ? check(`${p}.attuned`, 'Attuned', { rerender: true }) : ''}
+      ${input(`${p}.acBonus`, { label: 'AC bonus while equipped', type: 'number', cls: 'xs' })}
+    </div>
+    ${textarea(`${p}.notes`, { rows: 2, placeholder: 'Notes, command words, where you found it…' })}
+  </div>`;
+}
+
+function equipmentList() {
+  const f = F('equipment');
+  const list = C().items.filter((i) => {
+    if (f.status === 'equipped' && !i.equipped) return false;
+    if (f.status === 'bag' && i.equipped) return false;
+    if (f.type && i.type !== f.type) return false;
+    if (f.rarity && i.rarity !== f.rarity) return false;
+    return matchQ('equipment', i.name, i.notes, i.type, i.rarity, i.weapon?.base, i.armor?.base);
+  });
+  if (!list.length) return `<p class="muted">${C().items.length ? 'No item matches these filters.' : 'Nothing here yet. Use "Add item" below.'}</p>`;
+  const group = (title, arr) => (arr.length ? `<h3 class="grp">${title} <span class="muted">(${arr.length})</span></h3>${arr.map(equipCard).join('')}` : '');
+  return group('Equipped', list.filter((i) => i.equipped)) + group('Bag', list.filter((i) => !i.equipped));
+}
+
+function tabEquipment() {
+  const w = carriedWeight();
+  const cap = num(C().abilities.str) * 15;
+  const eq = equippedItems().length;
+  return `
+  <section class="card">
+    <h2>Equipment & bag</h2>
+    <div class="row">
+      <span class="counter ${w > cap ? 'over' : ''}">Carried: <b>${Math.round(w * 10) / 10} / ${cap} lb</b></span>
+      <span class="counter">Equipped: <b>${eq}</b></span>
+      ${counter(attunedCount(), attunementLimit(lvl()), 'Attuned')}
+    </div>
+    <p class="hint">Weight counts quantity × weight plus coins (50 per lb). Capacity is STR × 15.</p>
+    <div class="filters">
+      ${fsearch('equipment', 'Search equipment…')}
+      ${chips('equipment', 'status', [['', 'All'], ['equipped', '★ Equipped'], ['bag', 'In bag']])}
+      <div class="row">
+        ${fselect('equipment', 'type', [['', 'Any type'], ...ITEM_TYPES.map((t) => [t, t])], 'Type')}
+        ${fselect('equipment', 'rarity', [['', 'Any rarity'], ...RARITIES.map((r) => [r, r])], 'Rarity')}
+      </div>
+    </div>
+    <div id="list">${equipmentList()}</div>
+    <button class="ghost" data-action="addMenu">${addMenuOpen ? 'Cancel' : '+ Add item'}</button>
+    ${addMenuOpen ? `<div class="row add-menu">
+      <button data-action="addEquip" data-kind="Weapon">+ Weapon</button>
+      <button data-action="addEquip" data-kind="Armor">+ Armor</button>
+      <button data-action="addEquip" data-kind="Shield">+ Shield</button>
+      <button data-action="addEquip" data-kind="Other">+ Other item</button>
+    </div>` : ''}
+  </section>
+  <section class="card">
+    <h2>Coins & other gear</h2>
+    <div class="row">${['cp', 'sp', 'ep', 'gp', 'pp'].map((k) => input(`character.coins.${k}`, { label: k.toUpperCase(), type: 'number', min: 0, cls: 'xs' })).join('')}</div>
+    ${textarea('character.gear', { label: 'Other notes about gear', rows: 5 })}
+  </section>`;
+}
+
 // ----- Magic items
 const ORIGINS = [['replicated', 'Replicated (plan)'], ['found', 'Found / loot'], ['bought', 'Bought'], ['reward', 'Reward / gift']];
-const RARITIES = ['Common', 'Uncommon', 'Rare', 'Very Rare', 'Legendary', 'Artifact'];
+const RARITIES = ['Mundane', 'Common', 'Uncommon', 'Rare', 'Very Rare', 'Legendary', 'Artifact'];
 function itemsList() {
   const f = F('items');
   const list = C().items.filter((i) => {
+    if (i.rarity === 'Mundane') return false;
     if (f.origin && i.origin !== f.origin) return false;
     if (f.status === 'attuned' && !i.attuned) return false;
     if (f.status === 'equipped' && !i.equipped) return false;
@@ -612,13 +932,13 @@ function itemsList() {
     if (f.type && i.type !== f.type) return false;
     return matchQ('items', i.name, i.notes, i.type, i.rarity);
   });
-  if (!list.length) return `<p class="muted">${C().items.length ? 'No item matches these filters.' : 'No magic items yet. Create one from the Plans tab or add a found item.'}</p>`;
+  if (!list.length) return `<p class="muted">${C().items.some((i) => i.rarity !== 'Mundane') ? 'No item matches these filters.' : 'No magic items yet. Create one from the Plans tab or add a found item.'}</p>`;
   return list.map((i) => {
     const p = `character.items.#${i.id}`;
     return `<div class="item ${i.attuned || i.equipped ? 'sel' : ''}">
       <div class="item-head">
         ${input(`${p}.name`, { placeholder: 'Item name' })}
-        <button class="icon danger" data-action="removeItem" data-id="${i.id}" title="Delete">✕</button>
+        <button class="icon danger" data-action="removeItem" data-id="${esc(i.id)}" title="Delete">✕</button>
       </div>
       <div class="row tight tags-row">
         ${i.attuned ? '<span class="flag always">Attuned</span>' : ''}
@@ -628,8 +948,8 @@ function itemsList() {
       </div>
       <div class="row">
         ${select(`${p}.origin`, ORIGINS, { label: 'Origin', cls: 'sm', rerender: true })}
-        ${select(`${p}.type`, PLAN_TYPES.filter((t) => t !== 'Any').concat(['Potion', 'Scroll', 'Staff', 'Rod', 'Other']), { label: 'Type', cls: 'sm', rerender: true })}
-        ${select(`${p}.rarity`, RARITIES, { label: 'Rarity', cls: 'sm', rerender: true })}
+        ${select(`${p}.type`, ITEM_TYPES, { label: 'Type', cls: 'sm', rerender: true })}
+        ${select(`${p}.rarity`, RARITIES.filter((r) => r !== 'Mundane'), { label: 'Rarity', cls: 'sm', rerender: true })}
         ${input(`${p}.charges`, { label: 'Charges', type: 'number', min: 0, cls: 'xs' })}
         ${input(`${p}.chargesMax`, { label: 'Max', type: 'number', min: 0, cls: 'xs' })}
       </div>
@@ -655,17 +975,13 @@ function tabItems() {
       ${chips('items', 'status', [['', 'All'], ['attuned', '★ Attuned'], ['equipped', 'Equipped'], ['needsAttune', 'Not yet attuned']])}
       <div class="row">
         ${fselect('items', 'origin', [['', 'Any origin'], ...ORIGINS], 'Origin')}
-        ${fselect('items', 'type', [['', 'Any type'], ...PLAN_TYPES.filter((t) => t !== 'Any').concat(['Potion', 'Scroll', 'Staff', 'Rod', 'Other']).map((t) => [t, t])], 'Type')}
-        ${fselect('items', 'rarity', [['', 'Any rarity'], ...RARITIES.map((r) => [r, r])], 'Rarity')}
+        ${fselect('items', 'type', [['', 'Any type'], ...ITEM_TYPES.map((t) => [t, t])], 'Type')}
+        ${fselect('items', 'rarity', [['', 'Any rarity'], ...RARITIES.filter((r) => r !== 'Mundane').map((r) => [r, r])], 'Rarity')}
       </div>
     </div>
     <div id="list">${itemsList()}</div>
     <button class="ghost" data-action="addItem">+ Add found item</button>
-  </section>
-  <section class="card">
-    <h2>Coins & other gear</h2>
-    <div class="row">${['cp', 'sp', 'ep', 'gp', 'pp'].map((k) => input(`character.coins.${k}`, { label: k.toUpperCase(), type: 'number', min: 0, cls: 'xs' })).join('')}</div>
-    ${textarea('character.gear', { label: 'Mundane equipment (tools, pack, armor…)', rows: 5 })}
+    <p class="hint">Weapons, armor, weight and coins are on the Equipment & bag tab.</p>
   </section>`;
 }
 
@@ -688,7 +1004,7 @@ function featsList() {
     return `<div class="item ${taken.length ? 'sel' : ''} ${ok || taken.length ? '' : 'locked'}">
       <div class="row tight">
         <b class="grow">${esc(ft.name)}</b>
-        ${(!taken.length || ft.repeatable) ? `<button class="small ${ok ? 'ok' : ''}" data-action="takeFeat" data-id="${ft.id}">${taken.length ? 'Take again' : 'Take'}</button>` : ''}
+        ${(!taken.length || ft.repeatable) ? `<button class="small ${ok ? 'ok' : ''}" data-action="takeFeat" data-id="${esc(ft.id)}">${taken.length ? 'Take again' : 'Take'}</button>` : ''}
       </div>
       <div class="row tight tags-row">
         ${taken.length ? `<span class="flag prepared">Taken${taken.length > 1 ? ` ×${taken.length}` : ''}</span>` : ''}
@@ -701,7 +1017,7 @@ function featsList() {
         <div class="row taken">
           ${input(`character.feats.#${t.id}.level`, { label: 'Taken at level', type: 'number', min: 1, max: 20, cls: 'xs' })}
           ${input(`character.feats.#${t.id}.notes`, { label: 'Choices (ability +1, spells, skills…)', cls: 'grow' })}
-          <button class="icon danger" data-action="dropFeat" data-id="${t.id}" title="Remove">✕</button>
+          <button class="icon danger" data-action="dropFeat" data-id="${esc(t.id)}" title="Remove">✕</button>
         </div>`).join('')}
     </div>`;
   }).join('');
@@ -735,7 +1051,11 @@ function tabSelected() {
     return `<div class="sel-group">${lvlTag(l)} ${sp.map((s) => `<span class="pill ${spellStatus(s)}">${esc(s.name)}${s.flags.includes('C') ? ' <small>C</small>' : ''}${s.flags.includes('R') ? ' <small>R</small>' : ''}</span>`).join('')}</div>`;
   }).join('');
   const plans = knownPlans().map((p) => `<span class="pill">${esc(p.name)} <small>L${p.tier}+</small></span>`).join('');
-  const items = c.items.map((i) => `<span class="pill ${i.attuned ? 'always' : ''}">${esc(i.name || 'Unnamed item')}${i.attuned ? ' <small>attuned</small>' : ''}${i.chargesMax ? ` <small>${num(i.charges)}/${num(i.chargesMax)}</small>` : ''}</span>`).join('');
+  const eqPills = equippedItems().map((i) => {
+    const fx = itemEffect(i);
+    return `<span class="pill">${esc(i.name || 'Unnamed item')}${fx ? ` <small>${esc(fx)}</small>` : ''}</span>`;
+  }).join('');
+  const items = c.items.filter((i) => i.rarity !== 'Mundane').map((i) => `<span class="pill ${i.attuned ? 'always' : ''}">${esc(i.name || 'Unnamed item')}${i.attuned ? ' <small>attuned</small>' : ''}${i.chargesMax ? ` <small>${num(i.charges)}/${num(i.chargesMax)}</small>` : ''}</span>`).join('');
   const feats = c.feats.map((t) => { const ft = featById(t.featId); return `<span class="pill">${esc(ft?.name || t.featId)} <small>L${esc(t.level)}</small>${t.notes ? ` <small>${esc(t.notes)}</small>` : ''}</span>`; }).join('');
   const skills = SKILLS.filter((s) => num(c.skills[s.key])).map((s) => `<span class="pill">${s.name} ${calcSpan(`skill:${s.key}`)}</span>`).join('');
   const section = (title, tab, count, body) => `
@@ -747,6 +1067,7 @@ function tabSelected() {
   ${section('Spells', 'spells', `${counter(preparedCount(), at(PREPARED, lvl()), 'Prepared')} ${counter(cantripCount(), at(CANTRIPS, lvl()), 'Cantrips')}`,
     byLevel && `${byLevel}<p class="hint"><span class="pill always">Always prepared</span> <span class="pill prepared">Prepared / known</span> C = Concentration, R = Ritual</p>`)}
   ${lvl() >= 2 ? section('Known plans', 'plans', counter(knownPlans().length, at(PLANS_KNOWN, lvl()), 'Known'), plans && `<div class="sel-group">${plans}</div>`) : ''}
+  ${section('Equipped', 'equipment', `<span class="counter">AC <b>${acInfo().ac}</b></span>`, eqPills && `<div class="sel-group">${eqPills}</div>`)}
   ${section('Magic items', 'items', counter(attunedCount(), attunementLimit(lvl()), 'Attuned'), items && `<div class="sel-group">${items}</div>`)}
   ${section('Feats', 'feats', counter(c.feats.length, featSlots(), 'Taken'), feats && `<div class="sel-group">${feats}</div>`)}
   ${section('Skill proficiencies', 'stats', '', skills && `<div class="sel-group">${skills}</div>`)}
@@ -777,7 +1098,7 @@ function journalList() {
       ${textarea(`${p}.notes`, { label: 'Notes', rows: 8, placeholder: 'NPCs, places, clues, quotes…' })}
       ${textarea(`${p}.loot`, { label: 'Loot & XP', rows: 2 })}
       ${textarea(`${p}.followUps`, { label: 'To remember / open threads', rows: 3 })}
-      <button class="danger small" data-action="removeSession" data-id="${s.id}">Delete session</button>
+      <button class="danger small" data-action="removeSession" data-id="${esc(s.id)}">Delete session</button>
     </details>`;
   }).join('');
 }
@@ -818,8 +1139,8 @@ function tabData() {
   </section>`;
 }
 
-const RENDER = { stats: tabStats, combat: tabCombat, spells: tabSpells, plans: tabPlans, items: tabItems, feats: tabFeats, selected: tabSelected, journal: tabJournal, data: tabData };
-const LIST_RENDER = { spells: spellsList, plans: plansList, items: itemsList, feats: featsList };
+const RENDER = { stats: tabStats, combat: tabCombat, equipment: tabEquipment, spells: tabSpells, plans: tabPlans, items: tabItems, feats: tabFeats, selected: tabSelected, journal: tabJournal, data: tabData };
+const LIST_RENDER = { equipment: equipmentList, spells: spellsList, plans: plansList, items: itemsList, feats: featsList };
 
 function render() {
   const tab = RENDER[state.ui.tab] ? state.ui.tab : 'stats';
@@ -827,10 +1148,12 @@ function render() {
   const focused = document.activeElement?.dataset?.bind || document.activeElement?.dataset?.filter;
   view.innerHTML = `
     ${header()}
+    ${statusStrip()}
     <nav class="tabs" role="tablist">${TABS.map(([k, t]) => `<button role="tab" class="${k === tab ? 'active' : ''}" aria-selected="${k === tab}" data-action="tab" data-key="${k}">${t}</button>`).join('')}</nav>
     <main>${RENDER[tab]()}</main>
     <footer class="muted"><span id="saveStatus">Saved</span> · Artificer (Forge of the Artificer) · D&D 2024 rules</footer>
     ${datalists()}`;
+  applyBodyFx();
   window.scrollTo(0, y);
   if (focused) {
     const el = [...view.querySelectorAll('[data-bind],[data-filter]')].find((x) => (x.dataset.bind || x.dataset.filter) === focused);
@@ -906,6 +1229,11 @@ const actions = {
     render();
   },
   cycleSkill: (el) => { const k = el.dataset.key; C().skills[k] = (num(C().skills[k]) + 1) % 3; commit(); },
+  setExhaustion: (el) => {
+    const n = Number(el.dataset.n);
+    C().exhaustion = n === num(C().exhaustion) && n > 0 ? n - 1 : n;
+    commit();
+  },
   toggleCondition: (el) => {
     const c = C(); const k = el.dataset.key;
     c.conditions = c.conditions.includes(k) ? c.conditions.filter((x) => x !== k) : [...c.conditions, k];
@@ -965,8 +1293,17 @@ const actions = {
     actions.dismissCannon(el);
   },
   addAttack: () => {
-    C().attacks.push({ id: uid(), name: '', ability: 'dex', proficient: true, bonus: 0, damage: '1d8', dmgBonus: 0, addMod: true, damageType: 'Piercing', mastery: '', notes: '', firearm: false });
+    C().attacks.push({ id: uid(), name: '', ability: 'dex', proficient: true, bonus: 0, dmgBonus: 0, addMod: true, mastery: '', notes: '', firearm: false, damages: [{ id: uid(), dice: '1d8', type: 'Piercing' }] });
     commit();
+  },
+  addDamage: (el) => {
+    const list = getPath(el.dataset.path);
+    if (Array.isArray(list)) { list.push({ id: uid(), dice: '', type: '' }); commit(); }
+  },
+  removeDamage: (el) => {
+    const path = el.dataset.path;
+    const list = getPath(path);
+    if (Array.isArray(list)) { setPath(path, list.filter((x) => x.id !== el.dataset.id)); commit(); }
   },
   removeAttack: (el) => {
     const a = C().attacks.find((x) => x.id === el.dataset.id);
@@ -1023,12 +1360,20 @@ const actions = {
       c.items = c.items.filter((i) => i.id !== reps[0].id);
     }
     const rarity = plan.tier >= 14 ? 'Rare' : 'Uncommon';
-    c.items.push({ id: uid(), name: plan.name, origin: 'replicated', planId: plan.id, type: plan.type === 'Any' ? 'Other' : plan.type, rarity, needsAttune: plan.attune === true, attuned: false, equipped: true, charges: 0, chargesMax: 0, notes: '' });
+    const generic = /^(Armor|Weapon) \+\d/.test(plan.name); // base unknown: don't count it until the player picks one
+    c.items.push(newItem({ name: plan.name, origin: 'replicated', planId: plan.id, type: plan.type === 'Any' ? 'Other' : plan.type, rarity, needsAttune: plan.attune === true, equipped: !generic, notes: generic ? 'Choose the base armor/weapon in Equipment & bag, then equip it.' : '' }));
     commit();
     toast(`${plan.name} created: set rarity/charges on Magic items`);
   },
   addItem: () => {
-    C().items.push({ id: uid(), name: '', origin: 'found', planId: '', type: 'Wondrous', rarity: 'Uncommon', needsAttune: false, attuned: false, equipped: false, charges: 0, chargesMax: 0, notes: '' });
+    C().items.push(newItem());
+    commit();
+  },
+  addMenu: () => { addMenuOpen = !addMenuOpen; render(); },
+  addEquip: (el) => {
+    const kind = el.dataset.kind;
+    C().items.push(newItem({ origin: 'bought', rarity: 'Mundane', type: kind }));
+    addMenuOpen = false;
     commit();
   },
   removeItem: (el) => {
@@ -1100,6 +1445,7 @@ view.addEventListener('input', (e) => {
 view.addEventListener('change', (e) => {
   const el = e.target;
   if (el.id === 'importFile') return importFile(el.files[0]);
+  if (el.dataset.catalog) applyCatalog(el);
   if (el.dataset.bind && (el.hasAttribute('data-rerender') || el.type === 'checkbox' || el.tagName === 'SELECT')) setTimeout(render, 0);
 });
 view.addEventListener('toggle', (e) => {
@@ -1107,6 +1453,24 @@ view.addEventListener('toggle', (e) => {
   if (!id) return;
   if (e.target.open) openSessions.add(id); else openSessions.delete(id);
 }, true);
+
+// Picking a base weapon/armor fills in its numbers (and the name when empty); everything stays editable.
+function applyCatalog(el) {
+  const it = C().items.find((x) => x.id === el.dataset.id);
+  if (!it) return;
+  if (el.dataset.catalog === 'weapon') {
+    const w = WEAPONS.find((x) => x.name === el.value);
+    if (!w) return;
+    Object.assign(it.weapon, { base: w.name, category: w.category, range: w.range, finesse: w.finesse, thrown: w.thrown, props: w.props, mastery: w.mastery, damages: [{ id: uid(), dice: w.dice, type: w.type }] });
+    if (!it.name) it.name = w.name;
+  } else {
+    const a = ARMOR.find((x) => x.name === el.value);
+    if (!a) return;
+    Object.assign(it.armor, { base: a.name, armorType: a.armorType, baseAC: a.baseAC, str: a.str, stealth: a.stealth });
+    if (!it.name) it.name = a.name;
+  }
+  persist();
+}
 
 async function importFile(file) {
   if (!file) return;

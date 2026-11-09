@@ -25,7 +25,7 @@ Target devices: Android (Redmi 15, Chrome) and Windows 10/11 (Edge/Chrome). READ
 
 ## File map
 - `index.html`: shell; loads `css/styles.css` and `js/app.js` (module). Everything renders into `#view`.
-- `js/app.js`: all UI, derived values, actions and event wiring (about 1150 lines). Sections, in order:
+- `js/app.js`: all UI, derived values, actions and event wiring (about 1500 lines). Sections, in order:
   - helpers (`esc`, `getPath`/`setPath`, `persist`, `commit`)
   - derived values and `calc(key)`
   - field builders (`input`, `select`, `check`, `textarea`, `pips`)
@@ -33,8 +33,8 @@ Target devices: Android (Redmi 15, Chrome) and Windows 10/11 (Edge/Chrome). READ
   - one `tabX()` per page (lists come from `xList()`)
   - `RENDER` / `LIST_RENDER` maps, `render()`, `renderList()`
   - `rest()`, the `actions` object, then the event listeners
-- `js/store.js`: state shape (`defaultState`), `normalize` (merge plus migrations), `load`/`save` (localStorage), `backupFile`/`downloadFile`, `uid`.
-- `js/rules.js`: generic 2024 data and math: `ABILITIES`, `SKILLS`, `CONDITIONS`, `ALIGNMENTS`, `DAMAGE_TYPES`, `WEAPON_MASTERIES`, `XP_THRESHOLDS`, `mod`, `profBonus`, `fmt`.
+- `js/store.js`: state shape (`defaultState`), `normalize` (merge plus migrations), `load`/`save` (localStorage), `backupFile`/`downloadFile`, `uid`, and item helpers `newItem`, `ensureItemData`, `magicBonus`, `newWeapon`/`newArmor`/`newShield`.
+- `js/rules.js`: generic 2024 data and math: `ABILITIES`, `SKILLS`, `CONDITIONS`, `ALIGNMENTS`, `DAMAGE_TYPES`, `WEAPON_MASTERIES`, `XP_THRESHOLDS`, `CONDITION_EFFECTS` (one-line condition reminders), `mod`, `profBonus`, `fmt`.
 - `js/data/artificer.js`:
   - per-level tables (`PLANS_KNOWN`, `MAGIC_ITEMS`, `CANTRIPS`, `PREPARED`, `SLOTS`) read with `at(arr, level)`
   - `FEATURES` (class plus Artillerist) and `USES` (tracked limited uses)
@@ -42,6 +42,7 @@ Target devices: Android (Redmi 15, Chrome) and Windows 10/11 (Edge/Chrome). READ
 - `js/data/spells.js`: `SPELLS` with `source`: `list` (2025 Artificer list), `tinker` (Mending), `artillerist`, `legacy` (2020 Tasha's list, hidden by default). Also exports `SOURCE_LABEL`, `SCHOOLS`, `slug`.
 - `js/data/plans.js`: `PLANS` (Replicate Magic Item, tiers 2/6/10/14; `generic` = "any item of this kind"), `PLAN_TYPES`, `TIERS`.
 - `js/data/feats.js`: `FEATS` (PHB 2024, Tasha's, Xanathar's, Eberron) with a `req` object used by `meetsReq()` in app.js. Also exports `FEAT_CATEGORIES`, `FEAT_SOURCES`.
+- `js/data/equipment.js`: `WEAPONS` and `ARMOR` catalogs (armor has `str` and `stealth`) (SRD 5.2.1 tables, checked). Picking one in the Equipment tab prefills the item.
 - `css/styles.css`: one coherent file with a single `:root` token block (light "sunlit parchment") plus a `prefers-color-scheme: dark` override ("moonlit scroll"). Magical-parchment look: grain texture on the page and tab bar only (cards stay smooth for readability), gold corner flourishes, ribbon tabs, glowing arcane pips. Fonts are self-hosted via `@font-face`.
 - `fonts/`: latin-subset woff2 files (Cinzel, Cinzel Decorative, EB Garamond; OFL licenses in `OFL-*.txt`). `img/grain.png`: tileable parchment grain overlay. Both are listed in `sw.js` `ASSETS` (not the license files).
 - `sw.js`: offline cache. `manifest.webmanifest` + `icons/`: install metadata.
@@ -54,6 +55,9 @@ Target devices: Android (Redmi 15, Chrome) and Windows 10/11 (Edge/Chrome). READ
 - Choices are stored as ids, never as copies of data: `character.spells` maps spell id → `'prepared'`/`'known'`; `plans.known` maps plan id → true; `feats` is a list of `{featId, level, notes}`.
   - Ids come from names (`slug`, or the same regex in plans/feats), so **renaming a data entry orphans saved choices** unless you migrate them.
   - "Always prepared" is computed (`alwaysPrepared()`), not stored.
+- Schema v3: `attacks[].damages` is a list of `{id, dice, type}` (flat bonus and ability mod go on the first). Items carry `qty`, `weight`, `acBonus` and a `weapon`/`armor`/`shield` sub-object by type (`ensureItemData()` in store.js adds them, parsing "+N" from the name); rarity `Mundane` items show only on the Equipment tab. `character.acAuto`/`acMisc`: AC is computed by `acInfo()` from equipped items; `ac` is used only when `acAuto` is false. `inspiration` stays in the data but has no UI.
+- `render()` puts `cond-<name>` and `exh-<n>` classes on `<body>`; CSS draws the vignettes and hero effects from them. The status strip under the header lists active conditions.
+- Damage components are edited with `damageEditor(path, list)` and the `addDamage`/`removeDamage` actions (`data-path` is the list path).
 - Export: `backupFile()` makes a JSON file, offered through the Web Share API (when files can be shared) or as a download. Import: JSON → `normalize()` → replaces all state. A `storage` event listener keeps open tabs in sync.
 - **Any change to the data shape needs a migration** in `normalize()`, plus a `SCHEMA_VERSION` bump. The existing v1→v2 step (generic sheet → Artificer) is the pattern. `merge()` fills in missing fields from `defaultState()`, so purely additive fields need only a default.
 
@@ -63,13 +67,15 @@ Target devices: Android (Redmi 15, Chrome) and Windows 10/11 (Edge/Chrome). READ
 - Add every new file the app loads to `ASSETS`, or it won't be available offline.
 
 ## Rules-accuracy policy
-- Everything in `js/data/*.js` comes from community transcriptions (mainly dnd2024.wikidot.com) and guides (rpgbot.net, dungeonmister.com). **None of it was checked against the books.** Never describe it as verified, in code, UI text, docs or replies.
+- `js/data/equipment.js` and `CONDITION_EFFECTS` (rules.js) were checked against the official SRD 5.2.1 (CC-BY-4.0). `artificer.js`, `spells.js`, `plans.js` and `feats.js` are still unverified community data.
+- Apart from equipment.js, everything in `js/data/*.js` comes from community transcriptions (mainly dnd2024.wikidot.com) and guides (rpgbot.net, dungeonmister.com). **None of it was checked against the books.** Never describe it as verified, in code, UI text, docs or replies.
 - Never paste book text. Descriptions (`text`, `sum`) stay short and in your own words; full rules belong in the user's notes fields.
 - Known unverified data points:
   - whether the 2025 list really dropped the "legacy" spells
   - the spell slot level needed to create an Eldritch Cannon with a slot (the UI lets the user pick any available slot)
   - the species words used for Xanathar's racial-feat checks (e.g. treating Khoravar as half-elf)
   - Greater Dragonmark summaries (generic placeholders)
+  - The Medium Armor Master DEX 16 condition (community sources, the feat isn't in the SRD)
 - When the user's book disagrees, the book wins: fix the data entry and mention it.
 
 ## Conventions seen in the code
@@ -86,7 +92,7 @@ Target devices: Android (Redmi 15, Chrome) and Windows 10/11 (Edge/Chrome). READ
 - Naming: camelCase JavaScript, kebab-case CSS classes, 2-space indent, single quotes, semicolons.
 
 ## Known weak spots
-- `js/app.js` is large (about 1150 lines) and mixes views, logic and actions. Splitting it (e.g. one module per tab) is reasonable, but **only do it when the user asks**.
+- `js/app.js` is large (about 1500 lines) and mixes views, logic and actions. Splitting it (e.g. one module per tab) is reasonable, but **only do it when the user asks**.
 - No automated tests in the repo; checks are manual or ad-hoc Playwright.
 - Data lives per device and browser only: no sync between the user's phone and PCs (export/import only).
 - `confirm()`/`prompt()`/`alert()` are used for dialogs (hit dice, generic plans, cannon slot choice).

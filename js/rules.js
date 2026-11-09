@@ -39,6 +39,24 @@ export const CONDITIONS = [
   'Paralyzed', 'Petrified', 'Poisoned', 'Prone', 'Restrained', 'Stunned', 'Unconscious',
 ];
 
+// Short summaries in our own words, checked against the official SRD 5.2.1 Rules Glossary (pp.177-191) on 2026-11-09.
+export const CONDITION_EFFECTS = {
+  Blinded: "Can't see; auto-fail ability checks that need sight. Attacks against you have Advantage; your attacks have Disadvantage.",
+  Charmed: "Can't attack the charmer or target it with damaging abilities or magical effects. The charmer has Advantage on social checks against you.",
+  Deafened: "Can't hear; auto-fail ability checks that need hearing.",
+  Frightened: "Disadvantage on checks and attacks while the source is in sight; can't move closer to it.",
+  Grappled: 'Speed 0. Disadvantage on attacks against anyone but the grappler.',
+  Incapacitated: "No actions, Bonus Actions or Reactions. Concentration breaks; can't speak.",
+  Invisible: 'Advantage on Initiative. Attacks against you have Disadvantage; yours have Advantage (if unseen).',
+  Paralyzed: 'Incapacitated, Speed 0, auto-fail STR/DEX saves. Attacks against you have Advantage; hits within 5 ft are crits.',
+  Petrified: 'Turned to stone; includes Incapacitated. Speed 0, Resistance to all damage, auto-fail STR/DEX saves, attacks against you have Advantage.',
+  Poisoned: 'Disadvantage on attacks and ability checks.',
+  Prone: 'Crawl, or stand up (costs half your Speed). Disadvantage on your attacks. Attacks against you have Advantage within 5 ft, Disadvantage beyond.',
+  Restrained: 'Speed 0. Attacks against you have Advantage; yours have Disadvantage. Disadvantage on DEX saves.',
+  Stunned: 'Incapacitated, auto-fail STR/DEX saves. Attacks against you have Advantage.',
+  Unconscious: 'Incapacitated and Prone, drops items, Speed 0, auto-fail STR/DEX saves. Attacks against you have Advantage; hits within 5 ft are crits.',
+};
+
 export const DAMAGE_TYPES = [
   'Acid', 'Bludgeoning', 'Cold', 'Fire', 'Force', 'Lightning', 'Necrotic', 'Piercing',
   'Poison', 'Psychic', 'Radiant', 'Slashing', 'Thunder',

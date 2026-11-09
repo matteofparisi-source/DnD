@@ -9,10 +9,11 @@ It works offline, installs like an app on Android and Windows, and needs no acco
 | Page | What's in it |
 |---|---|
 | **Stats** | Identity (name, player, level, species, alignment, size), Artificer level 1-20, ability scores, saves (CON/INT preset), skills (Artificer choices marked **A**), proficiencies and resistances, all class and Artillerist features by level with use trackers |
-| **Combat** | HP (auto max: 8 + CON, then 5 + CON per level), damage/heal/temp HP, death saves, d8 Hit Dice, AC, conditions, exhaustion, the **Eldritch Cannon** panel (create, HP, modes with your DC and damage, Detonate at level 9, two cannons at 15), spell slots, limited uses, attacks with an Arcane Firearm flag |
+| **Combat** | HP (auto max: 8 + CON, then 5 + CON per level), damage/heal/temp HP, death saves, d8 Hit Dice, AC computed from equipped armor/shield/items (or manual), a 6-step exhaustion meter, 14 conditions with icons and short effect reminders (shown on every page as a status strip and subtle screen effects), the **Eldritch Cannon** panel (create, stat card, modes with your DC and damage, Detonate at level 9, two cannons at 15), spell slots, limited uses, attacks from equipped weapons plus custom attacks with several damage components |
+| **Equipment & bag** | Weapons, armor, shields and other gear with catalog pickers (simple/martial weapons, armor table), magic bonuses, equipped and attunement, carried weight vs STR × 15, filters, coins and gear notes |
 | **Spells** | Only Artificer spells. Each spell shows a **level tag** and a **status flag**: *Always prepared* (Artillerist spells and Mending), *Prepared / Known*, or *Not prepared*. Counters show prepared and cantrips against your level's limit |
 | **Plans** | Every Replicate Magic Item plan by tier (level 2+, 6+, 10+, 14+). Learn or forget plans, learn the "any Common / Uncommon Wondrous / Rare Wondrous" options as named items, and **Create** an item into Magic items (the oldest vanishes if you go over your limit) |
-| **Magic items** | Items you replicated or found: rarity, type, attunement (counter against 3/4/5/6), equipped, charges, notes |
+| **Magic items** | Non-mundane items you replicated or found: rarity, type, attunement (counter against 3/4/5/6), equipped, charges, notes |
 | **Feats** | PHB 2024, Tasha's, Xanathar's and Forge of the Artificer feats (Dragonmarks, Greater Dragonmarks, Boon of Siberys), with prerequisites checked against your character |
 | **★ Selected** | Everything you've chosen in one place: spells by level, known plans, items, feats, skills, conditions |
 | **Journal** | Session notes with search |
@@ -61,4 +62,5 @@ js/data/artificer.js   class table, features, Artillerist, cannon math
 js/data/spells.js      Artificer spell list (+ Artillerist, + legacy)
 js/data/plans.js       Replicate Magic Item plans
 js/data/feats.js       feats from the four books
+js/data/equipment.js   SRD 5.2.1 weapon and armor tables (checked)
 ```

@@ -1,8 +1,33 @@
+import { CONDITIONS } from './rules.js';
 // Persistence: everything is kept in this browser's localStorage, with JSON export/import for backups.
 export const KEY = 'dnd-companion-v1';
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 export const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
+
+// Item sub-objects for combat data. A magic bonus is read from names like "Weapon +1".
+export const magicBonus = (name) => Number(/\+(\d)/.exec(String(name || ''))?.[1]) || 0;
+export const newWeapon = (bonus = 0) => ({ base: '', category: 'simple', range: 'melee', finesse: false, thrown: false, props: '', mastery: '', bonus, firearm: false, damages: [{ id: uid(), dice: '1d6', type: 'Slashing' }] });
+export const newArmor = (bonus = 0) => ({ base: '', armorType: 'light', baseAC: 11, bonus, str: 0, stealth: false });
+export const newShield = (bonus = 0) => ({ bonus });
+export function newItem(fields = {}) {
+  const it = { id: uid(), name: '', origin: 'found', planId: '', type: 'Wondrous', rarity: 'Uncommon', needsAttune: false, attuned: false, equipped: false, charges: 0, chargesMax: 0, notes: '', qty: 1, weight: 0, acBonus: 0, ...fields };
+  ensureItemData(it);
+  return it;
+}
+// Adds the weapon/armor/shield sub-object for the item's type if missing (also fixes up older items).
+export function ensureItemData(it) {
+  it.qty = it.qty === undefined ? 1 : it.qty;
+  it.weight = it.weight === undefined ? 0 : it.weight;
+  it.acBonus = it.acBonus === undefined ? 0 : it.acBonus;
+  const b = magicBonus(it.name);
+  if (it.type === 'Weapon' && !it.weapon) it.weapon = newWeapon(b);
+  if (it.type === 'Armor' && !it.armor) it.armor = newArmor(b);
+  if (it.type === 'Shield' && !it.shield) it.shield = newShield(b);
+  if (it.armor) { it.armor.str ??= 0; it.armor.stealth ??= false; }
+  if (it.weapon && !Array.isArray(it.weapon.damages)) it.weapon.damages = [{ id: uid(), dice: '1d6', type: '' }];
+  return it;
+}
 
 export function defaultState() {
   return {
@@ -15,7 +40,7 @@ export function defaultState() {
       skills: {}, // skillKey -> 0 none, 1 proficient, 2 expertise
       hp: { max: 10, current: 10, temp: 0, auto: true },
       hdUsed: 0,
-      ac: 13, speed: 30, initBonus: 0,
+      ac: 13, acAuto: true, acMisc: 0, speed: 30, initBonus: 0,
       inspiration: false, exhaustion: 0,
       deathSaves: { success: 0, fail: 0 },
       conditions: [],
@@ -68,6 +93,26 @@ export function normalize(data) {
   c.level = Math.max(1, Math.min(20, Number(c.level) || 1));
   while (c.slotsUsed.length < 5) c.slotsUsed.push(0);
   for (const list of [c.attacks, c.items, c.feats, c.cannons, c.plans.custom, s.sessions]) list.forEach((x) => { x.id ||= uid(); });
+  // v2 -> v3: attacks get a damage-component list; items get combat data; AC is computed from equipment.
+  c.conditions = (Array.isArray(c.conditions) ? c.conditions : []).filter((n) => CONDITIONS.includes(n));
+  if (data && data.version && data.version < 3) {
+    c.acAuto = data.character?.ac === undefined || Number(data.character.ac) === 13; // keep a manual AC the user changed
+    for (const it of c.items) {
+      if (it.equipped && /^(Armor|Weapon) \+\d/.test(it.name || '')) {
+        it.equipped = false;
+        it.notes = it.notes || 'Choose the base armor/weapon in Equipment & bag, then equip it.';
+      }
+    }
+  }
+  for (const a of c.attacks) {
+    if (!Array.isArray(a.damages)) a.damages = [{ id: uid(), dice: a.damage ?? '', type: a.damageType || '' }];
+    delete a.damage; delete a.damageType;
+    a.damages.forEach((x) => { x.id ||= uid(); });
+  }
+  for (const it of c.items) {
+    ensureItemData(it);
+    it.weapon?.damages.forEach((x) => { x.id ||= uid(); });
+  }
   return s;
 }
 
