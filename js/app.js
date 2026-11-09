@@ -659,24 +659,26 @@ function tabCombat() {
 function spellDesc(s) {
   const d = SPELL_DETAILS[s.id];
   if (!d) return '';
-  const cell = (l, v) => `<div><dt>${l}</dt><dd>${esc(v)}</dd></div>`;
-  const m = /^(Using a Higher-Level Spell Slot|Cantrip Upgrade):\s*(.*)$/.exec(d.higher || '');
-  const higher = !d.higher ? '' : `<p class="sd-higher">${m ? `<b>${esc(m[1])}:</b> ${esc(m[2])}` : esc(d.higher)}</p>`;
+  const row = (l, v) => `<div class="sd-row"><dt>${l}</dt><dd>${esc(v)}</dd></div>`;
+  const paras = (t) => String(t || '').split(/\n\n+/).filter(Boolean).map((p) => `<p>${esc(p)}</p>`).join('');
+  const long = (l, t) => `<div class="sd-long"><dt>${l}</dt><dd>${paras(t)}</dd></div>`;
+  const higher = String(d.higher || '').replace(/^(Using a Higher-Level Spell Slot|Cantrip Upgrade)[.:]\s*/, '');
   const url = (/https?:\/\/[^\s),;]+/.exec(d.source) || [''])[0];
-  const src = d.checked
-    ? `<span class="tag-s ok">SRD 5.2.1 ✓</span> <span class="muted">${esc(d.source)}</span>`
+  const src = d.verbatim
+    ? `<span class="tag-s ok">SRD 5.2.1 · official text</span> <span class="muted">${esc(d.source)}</span>`
     : `<span class="tag-s warn">Community source · unverified</span> ${url ? `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(url.replace(/^https?:\/\//, ''))}</a>` : `<span class="muted">${esc(d.source)}</span>`}`;
   return `<details class="spell-desc" data-spell="${esc(s.id)}" ${openSpells.has(s.id) ? 'open' : ''}>
-    <summary>Description</summary>
-    <dl class="sd-grid">${cell('Casting time', d.time)}${cell('Range', d.range)}${cell('Components', d.components)}${cell('Duration', d.duration)}</dl>
-    <p class="sd-text">${esc(d.desc)}</p>
-    ${higher}
+    <summary>Spell details</summary>
+    <dl class="sd-list">${row('Casting Time', d.time)}${row('Range', d.range)}${row('Components', d.components)}${row('Duration', d.duration)}${long('Description', d.desc)}${higher ? long('At Higher Levels', higher) : ''}</dl>
     <p class="sd-src">${src}</p>
     ${d.note ? `<p class="sd-note">${esc(d.note)}</p>` : ''}
   </details>`;
 }
 function spellsList() {
   const f = F('spells');
+  const q = (f.q || '').trim().toLowerCase();
+  // When searching, spells whose name matches come before description-only matches.
+  const nameHit = (s) => (q && s.name.toLowerCase().includes(q) ? 1 : 0);
   const list = SPELLS.filter((s) => {
     const st = spellStatus(s);
     const chosen = st !== 'none'; // a spell you already selected stays visible whatever the toggles say
@@ -693,7 +695,7 @@ function spellsList() {
     if (f.ritual && !s.flags.includes('R')) return false;
     if (!f.showLocked && !castable(s) && !chosen) return false;
     return matchQ('spells', s.name, s.school, SOURCE_LABEL[s.source], s.book, SPELL_DETAILS[s.id]?.desc, C().spellNotes[s.id]);
-  }).sort((a, b) => a.level - b.level || a.name.localeCompare(b.name));
+  }).sort((a, b) => nameHit(b) - nameHit(a) || a.level - b.level || a.name.localeCompare(b.name));
   if (!list.length) return '<p class="muted">No spell matches these filters.</p>';
   return list.map((s) => {
     const st = spellStatus(s);
@@ -1161,6 +1163,12 @@ function tabData() {
       <label class="button">Import backup<input id="importFile" type="file" accept="application/json,.json" hidden></label>
       <button class="danger" data-action="reset">Delete everything</button>
     </div>
+  </section>
+  <section class="card credits">
+    <h2>Credits</h2>
+    <p>This work includes material from the System Reference Document 5.2.1 (&ldquo;SRD 5.2.1&rdquo;) by Wizards of the Coast LLC, available at <a href="https://www.dndbeyond.com/srd" target="_blank" rel="noopener">https://www.dndbeyond.com/srd</a>. The SRD 5.2.1 is licensed under the Creative Commons Attribution 4.0 International License, available at <a href="https://creativecommons.org/licenses/by/4.0/legalcode" target="_blank" rel="noopener">https://creativecommons.org/licenses/by/4.0/legalcode</a>.</p>
+    <p>Spell descriptions marked &ldquo;SRD 5.2.1 &middot; official text&rdquo; are copied from the SRD. Other rules data is our own summary of community sources and is unverified.</p>
+    <p>Fonts Cinzel, Cinzel Decorative and EB Garamond are used under the <a href="https://openfontlicense.org" target="_blank" rel="noopener">SIL Open Font License 1.1</a>.</p>
   </section>`;
 }
 
