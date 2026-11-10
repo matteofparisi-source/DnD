@@ -489,8 +489,9 @@ function cannonPanel() {
       <div class="cannon-left">
         <span class="counter">Free creations left: <b>${Math.max(0, free)} / ${usesMax('cannon')}</b></span>
         <span class="counter">Active: <b>${c.cannons.length} / ${st.count}</b></span>
-        <button class="ok" data-action="createCannon" data-key="free" ${free > 0 && c.cannons.length < st.count ? '' : 'disabled'}>Create (free)</button>
+        <button class="ok" data-action="createCannon" data-key="free" ${free > 0 && c.cannons.length < st.count ? '' : 'disabled'}>${lvl() >= 15 && c.cannons.length === 0 ? 'Create two (free)' : 'Create (free)'}</button>
         <button data-action="createCannon" data-key="slot" ${c.cannons.length < st.count ? '' : 'disabled'}>Create with a spell slot</button>
+        ${lvl() >= 15 ? '<span class="hint">One Magic action can create two cannons. The free creation covers both; a slot pays for one, so the second needs another slot.</span>' : ''}
       </div>
       <div class="statcard" aria-label="Cannon stats">
         <b class="sc-title">Eldritch Cannon</b>
@@ -506,11 +507,11 @@ function cannonPanel() {
     ${cannons || '<p class="muted">No cannon deployed. Creating one takes a Magic action with Smith\'s or Woodcarver\'s Tools; it lasts 1 hour or until 0 HP.</p>'}
     <table class="ref">
       <tr><th>Mode (Bonus Action, within 60 ft; cannon may move 15 ft)</th><th>Effect</th></tr>
-      <tr><td><b>Flamethrower</b> 15-ft cone</td><td>DEX save DC ${spellDC()}: ${st.flame}, half on success</td></tr>
+      <tr><td><b>Flamethrower</b> 15-foot Cone</td><td>DEX save DC ${spellDC()}: ${st.flame}, half on success; unattended flammable objects in the Cone start burning</td></tr>
       <tr><td><b>Force Ballista</b> 120 ft</td><td>Spell attack ${fmt(spellAtk())}: ${st.ballista}, push 5 ft</td></tr>
       <tr><td><b>Protector</b> 10 ft</td><td>Temp HP ${st.protector} to cannon and chosen creatures</td></tr>
       ${st.detonate ? `<tr><td><b>Detonate</b> (Reaction when it takes damage)</td><td>20 ft: DEX save DC ${spellDC()}, ${st.detonate}, half on success</td></tr>` : ''}
-      ${lvl() >= 15 ? '<tr><td><b>Fortified Position</b></td><td>Two cannons, one Bonus Action activates both; Half Cover within 10 ft of a cannon</td></tr>' : ''}
+      ${lvl() >= 15 ? '<tr><td><b>Fortified Position</b></td><td>Two cannons, one Bonus Action activates both; Half Cover for you and allies within 10 ft of a cannon</td></tr>' : ''}
     </table>
   </section>`;
 }
@@ -666,6 +667,8 @@ function spellDesc(s) {
   const url = (/https?:\/\/[^\s),;]+/.exec(d.source) || [''])[0];
   const src = d.verbatim
     ? `<span class="tag-s ok">SRD 5.2.1 · official text</span> <span class="muted">${esc(d.source)}</span>`
+    : /\(user's copy\)/.test(d.source)
+    ? `<span class="tag-s ok">Checked against your book</span> <span class="muted">${esc(d.source)}</span>`
     : `<span class="tag-s warn">Community source · unverified</span> ${url ? `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(url.replace(/^https?:\/\//, ''))}</a>` : `<span class="muted">${esc(d.source)}</span>`}`;
   return `<details class="spell-desc" data-spell="${esc(s.id)}" ${openSpells.has(s.id) ? 'open' : ''}>
     <summary>Spell details</summary>
@@ -1054,10 +1057,10 @@ function tabFeats() {
   <section class="card">
     <h2>Feats</h2>
     <div class="row">${counter(C().feats.length, featSlots(), 'Feats taken')}</div>
-    <p class="hint">You get an Origin feat from your background (in Eberron a Dragonmark can replace it), then a feat at levels 4, 8, 12, 16 and an Epic Boon at 19. Sources: Player's Handbook 2024, Tasha's, Xanathar's, Forge of the Artificer. Where a Tasha's/Xanathar's feat was reprinted in the 2024 PHB, only the 2024 version is listed. Summaries are short reminders: check the book for exact rules.</p>
+    <p class="hint">You get an Origin feat from your background, then a feat at levels 4, 8, 12, 16 and an Epic Boon at 19. In Eberron, certain house backgrounds grant a Dragonmark at level 1; otherwise take one as a feat from level 4. Sources: Player's Handbook 2024, Tasha's, Xanathar's, Forge of the Artificer. Where a Tasha's/Xanathar's feat was reprinted in the 2024 PHB, only the 2024 version is listed. Summaries are short reminders: check the book for exact rules.</p>
     <div class="filters">
       ${fsearch('feats', 'Search feats…')}
-      ${chips('feats', 'cat', [['', 'All'], ...FEAT_CATEGORIES.map((c) => [c, c])])}
+      ${chips('feats', 'cat', [['', 'All'], ...FEAT_CATEGORIES.map((c) => [c, c === 'Greater Dragonmark' ? 'Greater marks (General)' : c])])}
       ${chips('feats', 'status', [['', 'Any'], ['taken', '★ Taken'], ['available', 'Not taken']])}
       <div class="row">
         ${fselect('feats', 'src', [['', 'Any book'], ...FEAT_SOURCES.map((s) => [s, s])], 'Source')}
@@ -1317,7 +1320,9 @@ const actions = {
     const c = C();
     if (el.dataset.key === 'free') c.uses.cannon = num(c.uses.cannon) + 1;
     else if (!useSlot()) return;
-    c.cannons.push({ id: uid(), hp: 5 * lvl() });
+    // Level 15+: one free creation makes two cannons at once (a slot-paid creation makes one).
+    const n = el.dataset.key === 'free' && lvl() >= 15 && c.cannons.length === 0 ? 2 : 1;
+    for (let i = 0; i < n; i++) c.cannons.push({ id: uid(), hp: 5 * lvl() });
     commit();
   },
   dismissCannon: (el) => { C().cannons = C().cannons.filter((k) => k.id !== el.dataset.id); commit(); },

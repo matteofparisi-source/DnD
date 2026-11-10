@@ -85,7 +85,7 @@ export const FEATS = [
   F('Artificer Initiate', 'General', "Tasha's", {}, 'An Artificer cantrip and level 1 spell; tool proficiency. Mostly useful for non-Artificers.'),
   F('Eldritch Adept', 'General', "Tasha's", { text: 'Spellcasting or Pact Magic' }, 'Learn one Eldritch Invocation (2014 Warlock).'),
   F('Fighting Initiate', 'General', "Tasha's", { text: 'Martial weapon proficiency' }, 'Learn a Fighting Style (2014 rules; superseded by 2024 Fighting Style feats).'),
-  F('Gunner', 'General', "Tasha's", {}, '+1 DEX, firearms proficiency, ignore Loading. Firearms are rare in Eberron: ask your DM.'),
+  F('Gunner', 'General', "Tasha's", {}, '+1 DEX, firearms proficiency, ignore Loading, no Disadvantage on ranged attacks from hostile creatures within 5 ft. Firearms are rare in Eberron: ask your DM.'),
   F('Metamagic Adept', 'General', "Tasha's", { text: 'Spellcasting or Pact Magic' }, 'Two Metamagic options and 2 Sorcery Points.'),
 
   // ---- Xanathar's Guide to Everything (racial feats, 2014 species)
@@ -105,9 +105,9 @@ export const FEATS = [
   F('Squat Nimbleness', 'Racial', "Xanathar's", { text: 'Dwarf or a Small species', need: 'species:dwarf|gnome|halfling' }, '+5 ft Speed, Acrobatics or Athletics, escape grapples easily.'),
   F('Wood Elf Magic', 'Racial', "Xanathar's", { text: 'Elf (wood)', need: 'species:elf' }, 'A Druid cantrip, Longstrider and Pass without Trace.'),
 
-  // ---- Eberron: Forge of the Artificer — Dragonmarks (take the place of an Origin feat; one per character)
+  // ---- Eberron: Forge of the Artificer — Dragonmarks (certain Eberron backgrounds grant one at level 1, otherwise take it as a feat from level 4; one per character)
   ...[
-    ['Aberrant Dragonmark', 'A Sorcerer cantrip and level 1 spell; once per Long Rest add 1d4 to a failed CON save.'],
+    ['Aberrant Dragonmark', 'A Sorcerer cantrip and level 1 spell (CON), the spell free once per rest. Reaction: +1d4 to a failed CON save, once per Long Rest. Aberrant Surge.'],
     ['Mark of Detection', '+1d4 to Investigation and Insight; free Detect Magic, Detect Poison and Disease, See Invisibility.'],
     ['Mark of Finding', "+1d4 to Perception and Survival; free Hunter's Mark and Locate Object."],
     ['Mark of Handling', '+1d4 to Animal Handling and Nature; Animal Friendship and Speak with Animals.'],
@@ -115,21 +115,35 @@ export const FEATS = [
     ['Mark of Hospitality', "+1d4 to Persuasion, Brewer's Supplies, Cook's Utensils; Purify Food and Drink, Unseen Servant, Calm Emotions."],
     ['Mark of Making', "+1d4 to Arcana and Artisan's Tools; Mending and Magic Weapon. A natural fit for an Artificer."],
     ['Mark of Passage', '+1d4 to Acrobatics and Athletics; +5 ft Speed; Misty Step.'],
-    ['Mark of Scribing', "+1d4 to History and Calligrapher's Supplies; Comprehend Languages and Magic Mouth."],
-    ['Mark of Sentinel', '+1d4 to Insight and Perception; Shield; swap places with an ally who is attacked.'],
+    ['Mark of Scribing', "+1d4 to History and Calligrapher's Supplies; Message cantrip, Comprehend Languages; Magic Mouth at level 3."],
+    ['Mark of Sentinel', '+1d4 to Insight and Perception; Shield; Reaction: swap places with a creature within 5 ft that was hit and take the hit (Proficiency Bonus uses per Long Rest).'],
     ['Mark of Shadow', '+1d4 to Performance and Stealth; Minor Illusion and Invisibility.'],
     ['Mark of Storm', "+1d4 to Acrobatics and Navigator's Tools; Lightning Resistance; Thunderclap and Gust of Wind."],
     ['Mark of Warding', "+1d4 to Investigation and Thieves' Tools; Alarm, Mage Armor, Arcane Lock."],
   ].map(([n, s]) => F(n, 'Dragonmark', 'Eberron', { text: 'Eberron campaign; no other Dragonmark feat' }, s)),
-  // Greater Dragonmarks (level 4+, need the matching Dragonmark feat)
-  ...['Aberrant', 'Detection', 'Finding', 'Handling', 'Healing', 'Hospitality', 'Making', 'Passage', 'Scribing', 'Sentinel', 'Shadow', 'Storm', 'Warding']
-    .map((m) => {
-      const base = m === 'Aberrant' ? 'Aberrant Dragonmark' : `Mark of ${m}`;
-      return F(m === 'Aberrant' ? 'Greater Aberrant Mark' : `Greater Mark of ${m}`, 'Greater Dragonmark', 'Eberron',
-        { lvl: 4, text: base, need: `feat:${base}` }, 'A larger mark die and an extra benefit tied to your mark.');
-    }),
-  F('Potent Dragonmark', 'Greater Dragonmark', 'Eberron', { lvl: 4, text: 'Any Dragonmark feat', need: 'anyMark' }, "More of your mark's spells and extra free castings."),
-  F('Boon of Siberys', 'Epic Boon', 'Eberron', { lvl: 19, text: 'Eberron campaign' }, 'Cast a powerful spell without a slot once per rest.'),
+  // Greater Dragonmarks (level 4+, need the matching Dragonmark feat). The book files these under General; the
+  // 'Greater Dragonmark' category is only our UI grouping. Each: +1 to an ability score (Aberrant: CON) and the mark's d4 becomes d6.
+  ...[
+    ['Aberrant', 'Aberrant Fortitude (1d6 on failed CON saves, Short or Long Rest); Mark of Inspiration: Hit Die temp HP and Force damage, Proficiency Bonus uses per Long Rest.'],
+    ['Detection', 'Share See Invisibility with others (30 ft).'],
+    ['Finding', "Hunter's Mark has double range and ignores invisibility."],
+    ['Handling', 'Reaction benefit for your mount; Subdue Animal (WIS save, Proficiency Bonus uses per Long Rest).'],
+    ['Healing', 'Cure Wounds free Proficiency Bonus times per Long Rest; healing dice of 1 or 2 count as 3.'],
+    ['Hospitality', 'Purify Food and Drink can remove 1 Exhaustion level and grant temp HP, once per Long Rest.'],
+    ['Making', 'Magic Weapon is cast at 3rd level.'],
+    ['Passage', 'Reaction: teleport 2 allies up to 30 ft.'],
+    ['Scribing', 'Share Comprehend Languages; telepathy at 1 mile, once per Long Rest.'],
+    ['Sentinel', 'Make an attack when you swap places with Mark of Sentinel.'],
+    ['Shadow', 'Invisibility is cast at 3rd level.'],
+    ['Storm', 'Gust of Wind plus a 60 ft Fly Speed.'],
+    ['Warding', 'Reaction: impose Disadvantage on an attack against an ally, Proficiency Bonus uses per Long Rest.'],
+  ].map(([m, s]) => {
+    const base = m === 'Aberrant' ? 'Aberrant Dragonmark' : `Mark of ${m}`;
+    return F(m === 'Aberrant' ? 'Greater Aberrant Mark' : `Greater Mark of ${m}`, 'Greater Dragonmark', 'Eberron',
+      { lvl: 4, text: base, need: `feat:${base}` }, `${m === 'Aberrant' ? '+1 CON' : '+1 to an ability'}; mark die d4 becomes d6. ${s}`);
+  }),
+  F('Potent Dragonmark', 'General', 'Eberron', { lvl: 4, text: 'Any Dragonmark feat', need: 'anyMark' }, "Your mark's spell list is always prepared. Gain one extra spell slot of a level equal to half your level (rounded up, max 5), for mark spells only; recharges on a Short or Long Rest."),
+  F('Boon of Siberys', 'Epic Boon', 'Eberron', { lvl: 19, text: 'Eberron campaign' }, '+1 to an ability score (max 30). Pick one Sorcerer or Siberys-table spell of level 8 or lower: always prepared, cast once per Short or Long Rest without a slot or components.'),
 ].map((f) => ({ ...f, id: f.name.toLowerCase().replace(/[^a-z0-9]+/g, '-') }));
 
 export const FEAT_CATEGORIES = ['Origin', 'General', 'Fighting Style', 'Epic Boon', 'Dragonmark', 'Greater Dragonmark', 'Racial'];

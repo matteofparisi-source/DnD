@@ -69,16 +69,10 @@ Target devices: Android (Redmi 15, Chrome) and Windows 10/11 (Edge/Chrome). READ
 
 ## Rules-accuracy policy
 - Checked against the official SRD 5.2.1 (CC-BY-4.0) on 2026-11-09: `js/data/equipment.js`, `CONDITION_EFFECTS` (rules.js), and the 82 `spell-details.js` entries with `checked: true`.
-- The other 36 spell descriptions (`checked: false`) are community data and the UI labels them so.
-- Everything else in `js/data/*.js` (`artificer.js`, `spells.js`, `plans.js`, `feats.js`) comes from community transcriptions (mainly dnd2024.wikidot.com) and guides (rpgbot.net, dungeonmister.com). **None of it was checked against the books.** Never describe it as verified, in code, UI text, docs or replies.
-- Text from the official SRD 5.2.1 may be used verbatim (CC-BY-4.0): keep the attribution in spell-details.js, README and the app's Credits. Don't paste text from the books (PHB, Tasha's, Xanathar's, Forge of the Artificer) or from wikidot transcriptions of them: the repo and site are public. Non-SRD content stays in own-words summaries; full text belongs in the user's notes fields.
-- Known unverified data points:
-  - whether the 2025 list really dropped the "legacy" spells
-  - the spell slot level needed to create an Eldritch Cannon with a slot (the UI lets the user pick any available slot)
-  - the species words used for Xanathar's racial-feat checks (e.g. treating Khoravar as half-elf)
-  - Greater Dragonmark summaries (generic placeholders)
-  - The Medium Armor Master DEX 16 condition (community sources, the feat isn't in the SRD)
-  - the source books of the 7 `extra` spells (Arcana Unleashed / D&D Beyond Drops, from wikidot and press articles)
+- Checked on 2026-11-10 against the user's own copy of *Forge of the Artificer*: Artificer class data (`artificer.js` tables and features, Artillerist, cannon numbers), the 2025 spell list in `spells.js` (Catnap is not on it, so it is `legacy`), plan names in `plans.js` and tier 10/14 attunement, the Eberron feats in `feats.js`, Homunculus Servant. Against the user's *Tasha's*: legacy list membership, Tasha's feats, Booming Blade, Intellect Fortress, Sword Burst. Spell entries sourced "(user's copy)" show the tag "Checked against your book" (still `checked: false`, since `checked` means SRD).
+- The other 36 spell descriptions (`checked: false`) without a "(user's copy)" source are community data and the UI labels them so.
+- Still unverified (community transcriptions: dnd2024.wikidot.com, rpgbot.net, dungeonmister.com): Xanathar's spells and racial feats, PHB 2024 feats that are not in the SRD, the 2024 Summon Construct text, plan attunement values for tiers 2/6 (unreadable in the scan), Magic Item Adept's 4 attunements (text unreadable), the species words used for racial-feat checks (e.g. Khoravar as half-elf), the Medium Armor Master DEX 16 condition, the source books of the 7 `extra` spells (Arcana Unleashed / D&D Beyond Drops). Never call these verified, in code, UI text, docs or replies.
+- Text from the official SRD 5.2.1 may be used verbatim (CC-BY-4.0): keep the attribution in spell-details.js, README and the app's Credits. **Never copy text from the books** (PHB, Tasha's, Xanathar's, Forge of the Artificer) or from wikidot transcriptions of them, and never commit the books or their scans: the repo and site are public. Non-SRD content stays in short own-words summaries; full text belongs in the user's notes fields.
 - When the user's book disagrees, the book wins: fix the data entry and mention it.
 
 ## Conventions seen in the code

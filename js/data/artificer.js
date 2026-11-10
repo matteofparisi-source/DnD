@@ -29,33 +29,33 @@ export const ARTILLERIST_PROFICIENCIES = {
 
 // Class and subclass features. `uses` is a key into USES (tracked, reset on rests).
 export const FEATURES = [
-  { lvl: 1, name: 'Spellcasting', text: 'INT-based half caster. Focus: Thieves\', Tinker\'s or other Artisan\'s Tools you are proficient with. Change prepared spells on a Long Rest.' },
+  { lvl: 1, name: 'Spellcasting', text: 'INT-based half caster. Focus: Thieves\', Tinker\'s or other Artisan\'s Tools you are proficient with. Change prepared spells on a Long Rest, and swap one cantrip for another Artificer cantrip.' },
   { lvl: 1, name: "Tinker's Magic", uses: 'tinker', text: "You know Mending. Magic action with Tinker's Tools: make a small mundane item (e.g. rope, torch, bell, vial) that vanishes at the end of your next Long Rest." },
-  { lvl: 2, name: 'Replicate Magic Item', text: 'Learn plans. At the end of a Long Rest, with Tinker\'s Tools, create one or two items from different known plans, up to your Magic Items total (the oldest vanishes if you exceed it). You can swap one plan each time you gain a level.' },
-  { lvl: 3, name: 'Artillerist: Tools of the Trade', sub: true, text: "Martial Ranged weapon and Woodcarver's Tools proficiency; crafting a magic Wand takes half the time." },
-  { lvl: 3, name: 'Artillerist: Eldritch Cannon', sub: true, uses: 'cannon', text: 'See the Eldritch Cannon panel in Combat. One free creation per Long Rest; more by expending a spell slot.' },
+  { lvl: 2, name: 'Replicate Magic Item', text: 'Learn plans. At the end of a Long Rest, with Tinker\'s Tools, create one or two items from different known plans, up to your Magic Items total (the oldest vanishes if you exceed it). You can swap one plan each time you gain a level. Items vanish 1d4 days after you die, or at once if you replace their plan. A Wand or weapon you create can be your spellcasting focus.' },
+  { lvl: 3, name: 'Artillerist: Tools of the Trade', sub: true, text: "Martial Ranged weapon and Woodcarver's Tools proficiency; crafting a magic Wand takes half the time. If you already have Woodcarver's Tools, pick another Artisan's Tools instead." },
+  { lvl: 3, name: 'Artillerist: Eldritch Cannon', sub: true, uses: 'cannon', text: 'See the Eldritch Cannon panel in Combat. The cannon appears within 5 ft on a horizontal surface. One free creation per Long Rest; more by expending a spell slot. Dismiss it with a Magic action.' },
   { lvl: 4, name: 'Ability Score Improvement', text: 'Take the ASI feat or another feat you qualify for (Feats tab).' },
-  { lvl: 5, name: 'Artillerist: Arcane Firearm', sub: true, text: "After a Long Rest, carve sigils into a Rod, Staff, Wand or Martial Ranged weapon. Artificer spells cast through it add 1d8 to one damage roll." },
+  { lvl: 5, name: 'Artillerist: Arcane Firearm', sub: true, text: "After a Long Rest, carve sigils (Woodcarver's Tools) into a Rod, Staff, Wand or Martial Ranged weapon. It works as your spellcasting focus, and Artificer spells cast through it add 1d8 to one damage roll. Carving a new item moves the sigils." },
   { lvl: 6, name: 'Magic Item Tinker', uses: 'drain', text: 'Charge (Bonus Action: expend a slot to restore that many charges to an item you made), Drain (Bonus Action, 1/Long Rest: an item vanishes and becomes a level 1 slot if Common, level 2 if Uncommon or Rare), Transmute (Magic action, 1/Long Rest: turn an item you made into another of your plans).' },
   { lvl: 6, name: 'Magic Item Tinker: Transmute', uses: 'transmute', text: 'Once per Long Rest.' },
   { lvl: 7, name: 'Flash of Genius', uses: 'flash', text: 'Reaction: add your INT modifier to a failed ability check or saving throw by you or a creature within 30 ft (turning it into a success if enough). Uses = INT modifier per Long Rest.' },
   { lvl: 8, name: 'Ability Score Improvement', text: 'ASI or a feat.' },
   { lvl: 9, name: 'Artillerist: Explosive Cannon', sub: true, text: 'Cannon damage and Protector temp HP +1d8. Reaction when the cannon takes damage and you are within 60 ft: detonate it (3d10 Force, DEX save for half, within 20 ft).' },
   { lvl: 10, name: 'Magic Item Adept', text: 'You can attune to up to 4 magic items.' },
-  { lvl: 11, name: 'Spell-Storing Item', text: 'On a Long Rest, store a level 1-3 Artificer spell (casting time of an action) in a weapon or focus. Usable 2 × INT modifier times (min 2) with a Magic action.' },
+  { lvl: 11, name: 'Spell-Storing Item', text: 'On a Long Rest, store a level 1-3 Artificer spell (casting time of an action) in a weapon or focus. Usable 2 × INT modifier times (min 2) with a Magic action. The spell can\'t need a consumed material component; a creature can\'t use the item again until the start of its next turn.' },
   { lvl: 12, name: 'Ability Score Improvement', text: 'ASI or a feat.' },
   { lvl: 14, name: 'Advanced Artifice', text: 'Attune to up to 5 items. Refreshed Genius: regain one Flash of Genius use on a Short Rest.' },
-  { lvl: 15, name: 'Artillerist: Fortified Position', sub: true, text: 'Have two cannons at once (create both with one action; each extra one costs its own slot) and activate both with one Bonus Action. You and allies within 10 ft of a cannon have Half Cover.' },
+  { lvl: 15, name: 'Artillerist: Fortified Position', sub: true, text: 'Have two cannons at once and activate both with one Bonus Action. One Magic action creates up to two cannons: the free creation covers both, but if you pay a spell slot for the first, the second needs another slot. You and your allies within 10 ft of a cannon have Half Cover.' },
   { lvl: 16, name: 'Ability Score Improvement', text: 'ASI or a feat.' },
   { lvl: 18, name: 'Magic Item Master', text: 'Attune to up to 6 items.' },
   { lvl: 19, name: 'Epic Boon', text: 'An Epic Boon feat (Boon of Energy Resistance suggested) or another feat.' },
   { lvl: 20, name: 'Soul of Artifice', text: 'Cheat Death: at 0 HP (not killed outright), disintegrate any number of your Uncommon or Rare replicated items to go to 20 HP per item. Magical Guidance: regain all Flash of Genius uses on a Short Rest if attuned to at least one item.' },
 ];
 
-// Tracked limited uses: max(level, intMod) and what restores them.
+// Tracked limited uses: max uses (from level and INT modifier) and what restores them (all on a Long Rest unless noted).
 export const USES = {
   tinker: { name: "Tinker's Magic", max: (l, int) => Math.max(1, int), minLvl: 1 },
-  cannon: { name: 'Eldritch Cannon (free creation)', max: (l) => (l >= 15 ? 2 : 1), minLvl: 3 },
+  cannon: { name: 'Eldritch Cannon (free creation)', max: () => 1, minLvl: 3 },
   drain: { name: 'Drain Magic Item', max: () => 1, minLvl: 6 },
   transmute: { name: 'Transmute Magic Item', max: () => 1, minLvl: 6 },
   flash: { name: 'Flash of Genius', max: (l, int) => Math.max(1, int), minLvl: 7 },

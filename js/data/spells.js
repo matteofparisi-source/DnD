@@ -33,7 +33,7 @@ const LIST = [
   L('See Invisibility', 2, 'Divination'), L('Spider Climb', 2, 'Transmutation', 'C'), L('Tortoise Shell', 2, 'Abjuration', 'C'),
   L('Uncertain Footing', 2, 'Illusion', 'C'), L('Web', 2, 'Conjuration', 'C'),
   // 3rd
-  L('Blink', 3, 'Transmutation'), L('Catnap', 3, 'Enchantment'), L('Create Food and Water', 3, 'Conjuration'),
+  L('Blink', 3, 'Transmutation'), L('Create Food and Water', 3, 'Conjuration'),
   L('Dispel Magic', 3, 'Abjuration'), L('Elemental Weapon', 3, 'Transmutation', 'C'), L('Fly', 3, 'Transmutation', 'C'),
   L('Glyph of Warding', 3, 'Abjuration'), L('Haste', 3, 'Transmutation', 'C'), L('Protection from Energy', 3, 'Abjuration', 'C'),
   L('Revivify', 3, 'Necromancy'), L('Water Breathing', 3, 'Transmutation', 'R'), L('Water Walk', 3, 'Transmutation', 'R'),
@@ -61,7 +61,7 @@ const LEGACY = [
   L('Absorb Elements', 1, 'Abjuration'), L('Catapult', 1, 'Transmutation'), L('Snare', 1, 'Abjuration'),
   L("Tasha's Caustic Brew", 1, 'Evocation', 'C'),
   L('Pyrotechnics', 2, 'Transmutation'), L('Skywrite', 2, 'Transmutation', 'CR'),
-  L('Flame Arrows', 3, 'Transmutation', 'C'), L('Intellect Fortress', 3, 'Abjuration', 'C'), L('Tiny Servant', 3, 'Transmutation'),
+  L('Catnap', 3, 'Enchantment'), L('Flame Arrows', 3, 'Transmutation', 'C'), L('Intellect Fortress', 3, 'Abjuration', 'C'), L('Tiny Servant', 3, 'Transmutation'),
   L('Elemental Bane', 4, 'Transmutation', 'C'),
   L('Skill Empowerment', 5, 'Transmutation', 'C'), L('Transmute Rock', 5, 'Transmutation'),
 ];
