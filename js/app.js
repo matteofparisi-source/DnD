@@ -7,15 +7,28 @@ import { SPELLS, SOURCE_LABEL, SCHOOLS } from './data/spells.js';
 import { PLANS, PLAN_TYPES, TIERS } from './data/plans.js';
 import { FEATS, FEAT_CATEGORIES, FEAT_SOURCES } from './data/feats.js';
 import { WEAPONS, ARMOR } from './data/equipment.js';
-import { KEY, load, save, uid, normalize, defaultState, backupFile, downloadFile, newItem, newWeapon, ensureItemData } from './store.js';
+import {
+  KEY, load, save, uid, normalize, defaultState, backupFile, downloadFile, newItem, newWeapon, ensureItemData,
+  newNpc, newPlace, newFaction, newQuest, cleanTags, readSnaps, takeSnapshot, localDay, loadInfo, releaseSave, isBackup, SCHEMA_VERSION,
+} from './store.js';
 
 let state = load();
+// Google Drive sync (optional): js/drive.js is imported only when the Drive card opens or a sync is due.
+let driveMod = null;
+let driveLoading = null;
+let driveTimer = 0;
+let driveLastRun = 0;
+let driveAsk = null; // resolver of the open conflict sheet
+let hashCache = null; // hash of the synced part of the data (everything but ui); null = recompute
+const driveRt = { busy: false, msg: '', review: false, reviewMtime: '', prep: '', intent: '', again: false, epoch: 0, from: '' }; // prep: '' | 'preparing' | 'ready' (sign-in prepared, waiting for the 2nd tap)
 const view = document.getElementById('view');
-const openSessions = new Set();
+const openCards = new Set(); // open journal cards (sessions, NPCs, places, factions, quests), by id
 const openSpells = new Set();
 const openFilters = new Set();
 const openBlocks = new Set(); // open state of the collapsed editors on Combat
-let journalQuery = '';
+let jq = ''; // global journal search text
+let jtag = ''; // global journal tag filter
+const COLL_OF_TAB = { journal: 'sessions', npcs: 'npcs', places: 'places', factions: 'factions', quests: 'quests' };
 let addMenuOpen = false;
 
 // Spell details (about 100 KB) are loaded on demand the first time the Spells page renders.
@@ -52,15 +65,33 @@ function setPath(path, value) {
 }
 
 let saveTimer;
+// Saves now and shows the result in the footer (every save path goes through here).
+function saveNow() {
+  releaseSave();
+  hashCache = null;
+  const ok = save(state);
+  const el = document.getElementById('saveStatus');
+  if (el) { el.textContent = ok ? 'Saved' : 'Save failed: storage full or blocked'; el.classList.toggle('error', !ok); }
+  return ok;
+}
 function persist() {
+  releaseSave(); // a change by the user: from now on the (possibly fallback) state may be written
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    const ok = save(state);
-    const el = document.getElementById('saveStatus');
-    if (el) { el.textContent = ok ? 'Saved' : 'Save failed: storage full or blocked'; el.classList.toggle('error', !ok); }
-  }, 250);
+  saveTimer = setTimeout(saveNow, 250);
+  hashCache = null;
+  if (driveMod) driveSchedule();
 }
 function commit() { persist(); render(); }
+const newSession = (n, f = {}) => ({ id: uid(), number: n, date: localDay(), ingameDate: '', title: '', summary: '', notes: '', loot: '', followUps: '', tags: [], ...f });
+// Journal entries remember when they were last edited.
+function touch(path) {
+  const m = /^(journal\.\w+\.#[^.]+)\./.exec(path);
+  const e = m && getPath(m[1]);
+  if (e && 'updatedAt' in e) e.updatedAt = new Date().toISOString();
+}
+// Auto-grow textareas (data-grow): height follows the content.
+function grow(ta) { ta.style.height = 'auto'; ta.style.height = `${ta.scrollHeight + 2}px`; }
+function focusBy(attr, val) { [...view.querySelectorAll(`[${attr}]`)].find((x) => x.getAttribute(attr) === val)?.focus({ preventScroll: true }); }
 
 // ---------- derived values ----------
 const pb = () => profBonus(lvl());
@@ -278,8 +309,8 @@ function input(path, { type = 'text', label, aria = '', cls = '', placeholder = 
   const el = `<input ${attrs}>`;
   return label ? `<label class="field ${cls}"><span>${esc(label)}</span>${el}</label>` : el;
 }
-function textarea(path, { label, aria = '', rows = 4, placeholder = '' } = {}) {
-  const el = `<textarea data-bind="${esc(path)}" rows="${rows}" placeholder="${esc(placeholder)}" ${!label ? `aria-label="${esc(aria || placeholder || 'Notes')}"` : ''}>${esc(getPath(path))}</textarea>`;
+function textarea(path, { label, aria = '', rows = 4, placeholder = '', grow = false } = {}) {
+  const el = `<textarea data-bind="${esc(path)}" ${grow ? 'data-grow' : ''} rows="${rows}" placeholder="${esc(placeholder)}" ${!label ? `aria-label="${esc(aria || placeholder || 'Notes')}"` : ''}>${esc(getPath(path))}</textarea>`;
   return label ? `<label class="field wide"><span>${esc(label)}</span>${el}</label>` : el;
 }
 function select(path, options, { label, cls = '', rerender = false, type = '' } = {}) {
@@ -349,8 +380,8 @@ const SECTIONS = [
   { key: 'combat', label: 'Combat' },
   { key: 'spells', label: 'Spells' },
   { key: 'workshop', label: 'Workshop', tabs: [['equipment', 'Equipment & bag'], ['items', 'Magic items'], ['plans', 'Plans']] },
-  { key: 'journal', label: 'Journal' },
-  { key: 'character', label: 'Character', tabs: [['stats', 'Stats'], ['feats', 'Feats'], ['selected', '★ Selected'], ['data', 'Campaign & data']] },
+  { key: 'journal', label: 'Journal', tabs: [['journal', 'Sessions'], ['npcs', 'NPCs'], ['places', 'Places'], ['factions', 'Factions'], ['quests', 'Quests']] },
+  { key: 'character', label: 'Character', tabs: [['stats', 'Stats'], ['voice', 'Voice'], ['feats', 'Feats'], ['selected', '★ Selected'], ['data', 'Campaign & data']] },
 ];
 const NAV_ICONS = {
   combat: '<path d="M4 4l11 11M13 17l4-4M16 16l4 4"/><path d="M20 4L9 15M11 17L7 13M8 16l-4 4"/>',
@@ -401,7 +432,7 @@ function subTabs(sec, tab) {
 function header(compact = false) {
   const t = themePref();
   const label = `Theme: ${THEME_LABEL[t]}`;
-  const themeBtn = `<button class="icon theme-btn" data-action="theme" aria-label="${label}" title="${label}">${svgIcon(THEME_ICONS[t])}</button>`;
+  const themeBtn = `<span class="hero-btns"><button class="icon add-btn" data-action="sheet" data-kind="quick" aria-label="Quick add" title="Quick add">${svgIcon('<path d="M12 5v14M5 12h14"/>')}</button><button class="icon theme-btn" data-action="theme" aria-label="${label}" title="${label}">${svgIcon(THEME_ICONS[t])}</button></span>`;
   // Combat shows HP in the dock, so its plates are AC / Prof / Spell DC / Spell atk only.
   const plates = `
     <div class="plates ${compact ? '' : 'four'}" role="group" aria-label="Key stats">
@@ -1327,43 +1358,247 @@ function tabSelected() {
 }
 
 // ----- Journal
-function sessionMatches(s, q) {
-  if (!q) return true;
-  return ['title', 'summary', 'notes', 'loot', 'followUps', 'ingameDate', 'date', 'number'].some((k) => String(s[k] ?? '').toLowerCase().includes(q));
+// Five sub-tabs. Sessions live in state.sessions; NPCs, places, factions and quests in state.journal. All card bodies are lazy.
+const JK = {
+  sessions: { tab: 'journal', one: 'session', many: 'Sessions', hint: 'Log what happened each game night.' },
+  npcs: { tab: 'npcs', one: 'NPC', many: 'NPCs', hint: 'Keep track of the people you meet: role, faction and how they feel about you.' },
+  places: { tab: 'places', one: 'place', many: 'Places', hint: 'Cities, districts, dungeons and anywhere worth remembering.' },
+  factions: { tab: 'factions', one: 'faction', many: 'Factions', hint: 'Houses, guilds and groups, and what they want.' },
+  quests: { tab: 'quests', one: 'quest', many: 'Quests', hint: 'Jobs, hooks and goals, with steps you can tick off.' },
+};
+const jItems = (coll) => (coll === 'sessions' ? state.sessions : state.journal[coll]);
+const jFind = (coll, id) => jItems(coll).find((x) => x.id === id);
+const jPath = (coll, id) => (coll === 'sessions' ? `sessions.#${id}` : `journal.${coll}.#${id}`);
+const ATT_LABEL = { friendly: 'Friendly', neutral: 'Neutral', hostile: 'Hostile', unknown: 'Unknown' };
+const ST_LABEL = { active: 'Active', done: 'Done', failed: 'Failed', paused: 'Paused' };
+const QUEST_ORDER = ['active', 'paused', 'done', 'failed'];
+const jbadge = (v, label) => `<span class="jbadge b-${esc(v)}">${esc(label)}</span>`;
+const stepProgress = (q) => (q.steps.length ? `${q.steps.filter((s) => s.done).length}/${q.steps.length}` : '');
+const dotJoin = (...a) => a.map((x) => String(x ?? '').trim()).filter(Boolean).join(' · ');
+
+const jTitle = (coll, e) => (coll === 'sessions' ? e.title || 'Untitled session' : coll === 'quests' ? e.title || 'Untitled quest' : e.name || `Unnamed ${JK[coll].one}`);
+const jSub = (coll, e) => ({
+  sessions: () => dotJoin(e.date, e.ingameDate),
+  npcs: () => dotJoin(e.role, e.faction),
+  places: () => dotJoin(e.kind, e.region),
+  factions: () => '',
+  quests: () => (e.giver ? `from ${e.giver}` : ''),
+}[coll]());
+function jBadges(coll, e) {
+  if (coll === 'npcs' || coll === 'factions') return jbadge(e.attitude, ATT_LABEL[e.attitude]);
+  if (coll === 'quests') return `${jbadge(e.status, ST_LABEL[e.status])}${e.steps.length ? `<span class="jprog" role="img" aria-label="${e.steps.filter((x) => x.done).length} of ${e.steps.length} steps done">${stepProgress(e)}</span>` : ''}`;
+  return '';
 }
-function journalList() {
-  const q = journalQuery.trim().toLowerCase();
-  const list = [...state.sessions].sort((a, b) => num(b.number) - num(a.number)).filter((s) => sessionMatches(s, q));
-  if (!list.length) return `<p class="muted">${state.sessions.length ? 'No session matches your search.' : 'No sessions yet.'}</p>`;
-  return list.map((s) => {
-    const p = `sessions.#${s.id}`;
-    return `
-    <details class="item session" data-session="${s.id}" ${openSessions.has(s.id) ? 'open' : ''}>
-      <summary><span class="badge">#${esc(s.number)}</span><b class="grow">${esc(s.title || 'Untitled session')}</b><small class="muted">${esc(s.date || '')}</small></summary>
+// All searchable text of an entry (lowercase), including tags.
+function jText(coll, e) {
+  const parts = {
+    sessions: [e.number, e.title, e.summary, e.notes, e.loot, e.followUps, e.ingameDate, e.date],
+    npcs: [e.name, e.role, e.faction, e.attitude, e.location, e.notes],
+    places: [e.name, e.kind, e.region, e.notes],
+    factions: [e.name, e.attitude, e.goals, e.notes],
+    quests: [e.title, e.status, e.giver, e.reward, e.notes, e.steps?.map((s) => s.text).join('\n')],
+  }[coll];
+  return [...parts, ...(e.tags || [])].join('\n').toLowerCase();
+}
+function jSort(coll, list) {
+  const l = [...list];
+  if (coll === 'sessions') return l.sort((a, b) => num(b.number) - num(a.number));
+  l.sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0)); // newest first
+  if (coll === 'quests') l.sort((a, b) => QUEST_ORDER.indexOf(a.status) - QUEST_ORDER.indexOf(b.status));
+  return l;
+}
+function topTags(items, max = 12) {
+  const n = {};
+  for (const e of items) for (const t of e.tags || []) n[t] = (n[t] || 0) + 1;
+  return Object.entries(n).sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)).slice(0, max).map((x) => x[0]);
+}
+
+// Tags editor: chips with a 44px remove button, plus an input (Enter or comma adds).
+function tagsEditor(path, tags) {
+  return `<div class="tags-ed">
+    <span class="lbl">Tags</span>
+    ${tags.length ? `<div class="tag-list">${tags.map((t) => `<span class="tagchip">#${esc(t)}<button class="icon" data-action="removeTag" data-path="${esc(path)}" data-tag="${esc(t)}" aria-label="Remove tag ${esc(t)}">✕</button></span>`).join('')}</div>` : ''}
+    <div class="row tight"><input class="grow" data-tag-add="${esc(path)}" aria-label="Add a tag" placeholder="Add a tag, then Enter" autocomplete="off" autocapitalize="none" enterkeyhint="done" maxlength="40"><button data-action="addTag" data-path="${esc(path)}">Add tag</button></div>
+  </div>`;
+}
+// Checklist (quest steps, character goals): tick, edit, remove, plus an add row.
+function checklist(path, label) {
+  const list = getPath(path) || [];
+  return `<ul class="list steps">${list.map((x) => `<li class="${x.done ? 'done' : ''}">
+      ${check(`${path}.#${x.id}.done`, '', { title: `${label} done: ${x.text || 'untitled'}` })}
+      <input class="grow" data-bind="${esc(path)}.#${esc(x.id)}.text" value="${esc(x.text)}" aria-label="${esc(label)}" autocomplete="off">
+      <button class="icon" data-action="listRemove" data-path="${esc(path)}" data-id="${esc(x.id)}" aria-label="Remove ${esc(label.toLowerCase())}: ${esc(x.text || 'untitled')}">✕</button></li>`).join('')}</ul>
+    <div class="row tight"><input class="grow" data-list-add="${esc(path)}" aria-label="Add a ${esc(label.toLowerCase())}" placeholder="Add a ${esc(label.toLowerCase())}, then Enter" autocomplete="off" enterkeyhint="done"><button data-action="listAdd" data-path="${esc(path)}">Add</button></div>`;
+}
+
+function jBody(coll, e) {
+  const p = jPath(coll, e.id);
+  const del = coll === 'sessions'
+    ? `<button class="danger small" data-action="removeSession" data-id="${esc(e.id)}">Delete session</button>`
+    : `<button class="danger small" data-action="removeEntry" data-ref="${coll}:${esc(e.id)}">Delete ${JK[coll].one}</button>`;
+  const notes = coll === 'sessions' ? '' : textarea(`${p}.notes`, { label: 'Notes', rows: 4, grow: true });
+  const meta = coll === 'sessions' ? '' : `<p class="hint">Added ${esc(String(e.createdAt).slice(0, 10))}${e.updatedAt !== e.createdAt ? `, edited ${esc(String(e.updatedAt).slice(0, 10))}` : ''}</p>`;
+  const fields = {
+    sessions: () => `
       <div class="grid">
         ${input(`${p}.number`, { label: 'Session #', type: 'number', min: 0 })}
         ${input(`${p}.date`, { label: 'Real date', type: 'date' })}
         ${input(`${p}.ingameDate`, { label: 'In-game date / location' })}
         ${input(`${p}.title`, { label: 'Title' })}
       </div>
-      ${textarea(`${p}.summary`, { label: 'Summary', rows: 3 })}
-      ${textarea(`${p}.notes`, { label: 'Notes', rows: 8, placeholder: 'NPCs, places, clues, quotes…' })}
-      ${textarea(`${p}.loot`, { label: 'Loot & XP', rows: 2 })}
-      ${textarea(`${p}.followUps`, { label: 'To remember / open threads', rows: 3 })}
-      <button class="danger small" data-action="removeSession" data-id="${esc(s.id)}">Delete session</button>
-    </details>`;
-  }).join('');
+      ${textarea(`${p}.summary`, { label: 'Summary', rows: 3, grow: true })}
+      ${textarea(`${p}.notes`, { label: 'Notes', rows: 8, placeholder: 'NPCs, places, clues, quotes…', grow: true })}
+      ${textarea(`${p}.loot`, { label: 'Loot & XP', rows: 2, grow: true })}
+      ${textarea(`${p}.followUps`, { label: 'To remember / open threads', rows: 3, grow: true })}`,
+    npcs: () => `
+      <div class="grid">
+        ${input(`${p}.name`, { label: 'Name' })}
+        ${input(`${p}.role`, { label: 'Role' })}
+        ${input(`${p}.faction`, { label: 'Faction' })}
+        ${input(`${p}.location`, { label: 'Location' })}
+        ${select(`${p}.attitude`, Object.entries(ATT_LABEL), { label: 'Attitude toward you', rerender: true })}
+      </div>`,
+    places: () => `
+      <div class="grid">
+        ${input(`${p}.name`, { label: 'Name' })}
+        ${input(`${p}.kind`, { label: 'Kind (city, district, dungeon…)' })}
+        ${input(`${p}.region`, { label: 'Region' })}
+      </div>`,
+    factions: () => `
+      <div class="grid">
+        ${input(`${p}.name`, { label: 'Name' })}
+        ${select(`${p}.attitude`, Object.entries(ATT_LABEL), { label: 'Attitude toward you', rerender: true })}
+      </div>
+      ${textarea(`${p}.goals`, { label: 'Goals', rows: 2, grow: true })}`,
+    quests: () => `
+      <div class="grid">
+        ${input(`${p}.title`, { label: 'Title' })}
+        ${select(`${p}.status`, Object.entries(ST_LABEL), { label: 'Status', rerender: true })}
+        ${input(`${p}.giver`, { label: 'Quest giver' })}
+        ${input(`${p}.reward`, { label: 'Reward' })}
+      </div>
+      <h3>Steps ${e.steps.length ? `<small class="muted">${stepProgress(e)}</small>` : ''}</h3>
+      ${checklist(`${p}.steps`, 'Step')}`,
+  }[coll]();
+  return `${fields}${tagsEditor(`${p}.tags`, e.tags)}${notes}${meta}${del}`;
 }
-function tabJournal() {
+function jCard(coll, e) {
+  const open = openCards.has(e.id);
+  const sub = jSub(coll, e);
+  return `<details class="item jcard" data-jcard="${coll}:${esc(e.id)}" data-jid="${esc(e.id)}" ${open ? 'open' : ''}>
+    <summary><span class="jsum"><b>${coll === 'sessions' ? `<span class="badge">#${esc(e.number)}</span> ` : ''}${esc(jTitle(coll, e))}</b>${sub ? `<small class="muted">${esc(sub)}</small>` : ''}</span>${jBadges(coll, e)}</summary>
+    ${open ? `<div class="lazy-body">${jBody(coll, e)}</div>` : ''}
+  </details>`;
+}
+function jList(coll) {
+  const k = JK[coll];
+  const all = jItems(coll);
+  if (!all.length) return `<div class="empty"><p class="muted">No ${k.many.toLowerCase()} yet. ${k.hint}</p><button class="ok" data-action="${coll === 'sessions' ? 'addSession' : 'addEntry'}" data-coll="${coll}">Add ${k.one}</button></div>`;
+  const tag = F(coll).tag || '';
+  const hasQ = !!(F(coll).q || '').trim();
+  const list = jSort(coll, all.filter((e) => (!tag || e.tags.includes(tag)) && (!hasQ || matchQ(coll, jText(coll, e)))));
+  return list.length ? list.map((e) => jCard(coll, e)).join('') : `<p class="muted">No ${k.one} matches your search.</p>`;
+}
+function jPage(coll) {
+  const k = JK[coll];
+  const n = jItems(coll).length;
+  const tags = topTags(jItems(coll));
+  const cur = F(coll).tag || '';
+  if (cur && !tags.includes(cur)) tags.push(cur);
+  return `
+    <div class="row tight"><h2 class="grow">${k.many} <small class="muted">${n}</small></h2><button data-action="${coll === 'sessions' ? 'addSession' : 'addEntry'}" data-coll="${coll}">+ New ${k.one}</button></div>
+    ${n ? fsearch(coll, `Search ${k.many.toLowerCase()}…`) : ''}
+    ${tags.length ? chips(coll, 'tag', [['', 'All'], ...tags.map((t) => [t, `#${t}`])]) : ''}
+    <div id="list">${jList(coll)}</div>`;
+}
+
+// Global search over everything in the journal; a tag chip narrows all kinds at once.
+function jResults() {
+  const q = jq.trim().toLowerCase();
+  const all = Object.keys(JK).flatMap((c) => jItems(c));
+  const tags = topTags(all, 14);
+  if (jtag && !tags.includes(jtag)) tags.push(jtag);
+  const groups = Object.keys(JK).map((coll) => {
+    const hits = jSort(coll, jItems(coll).filter((e) => (!jtag || e.tags.includes(jtag)) && (!q || jText(coll, e).includes(q))));
+    if (!hits.length) return '';
+    return `<h3>${JK[coll].many} (${hits.length})</h3><ul class="jres">${hits.map((e) => `<li><button data-action="openEntry" data-ref="${coll}:${esc(e.id)}">
+      <span class="jsum"><b>${esc(jTitle(coll, e))}</b><small class="muted">${esc(dotJoin(jSub(coll, e), e.tags.map((t) => `#${t}`).join(' ')))}</small></span>${jBadges(coll, e)}</button></li>`).join('')}</ul>`;
+  }).join('');
+  const chipBar = tags.length ? `<div class="chips" role="group" aria-label="Filter results by tag">${[['', 'All tags'], ...tags.map((t) => [t, `#${t}`])].map(([v, t]) =>
+    `<button class="chip-btn ${jtag === v ? 'on' : ''}" data-action="jtag" data-val="${esc(v)}" aria-pressed="${jtag === v}">${esc(t)}</button>`).join('')}</div>` : '';
+  return `${chipBar}${groups || '<p class="muted" role="status">Nothing in the journal matches.</p>'}`;
+}
+function journalShell(coll) {
   return `
   <section class="card">
-    <div class="row"><h2 class="grow">Session journal</h2><button data-action="addSession">+ New session</button></div>
-    <input id="journalSearch" type="search" placeholder="Search all sessions…" aria-label="Search all sessions" value="${esc(journalQuery)}">
-    <div id="journalList">${journalList()}</div>
+    <input id="jsearch" type="search" placeholder="Search journal (names, notes, tags)…" aria-label="Search journal" value="${esc(jq)}">
+    <div id="jbody">${jq.trim() || jtag ? jResults() : jPage(coll)}</div>
   </section>`;
+}
+const tabJournal = () => journalShell('sessions');
+const tabNpcs = () => journalShell('npcs');
+const tabPlaces = () => journalShell('places');
+const tabFactions = () => journalShell('factions');
+const tabQuests = () => journalShell('quests');
+const jRefresh = () => { document.getElementById('jbody').innerHTML = jq.trim() || jtag ? jResults() : jPage(COLL_OF_TAB[state.ui.tab] || 'sessions'); };
+
+// Jump to a card (from a search result or a toast): switch sub-tab, open it, scroll to it.
+function goEntry(ref) {
+  const [coll, id] = String(ref).split(':');
+  if (coll === 'voice') { setTab('voice'); commit(); window.scrollTo(0, 0); return; }
+  if (!JK[coll] || !jFind(coll, id)) return;
+  jq = ''; jtag = '';
+  Object.assign(F(coll), { q: '', tag: '' });
+  openCards.add(id);
+  setTab(JK[coll].tab);
+  commit();
+  const card = [...view.querySelectorAll('[data-jid]')].find((x) => x.dataset.jid === id);
+  if (card) { card.scrollIntoView({ block: 'start' }); card.querySelector('summary').focus({ preventScroll: true }); }
+}
+
+// ----- Character voice
+const VOICE_FIELDS = [['personality', 'Personality', 'How do they come across?'], ['ideals', 'Ideals', 'What do they believe in?'], ['bonds', 'Bonds', 'Who or what do they care about?'], ['flaws', 'Flaws', 'What gets them in trouble?'], ['quirks', 'Speech quirks', 'Catchphrases, accent, habits, mannerisms…']];
+function tabVoice() {
+  const v = C().voice;
+  const bioField = (k, label) => textarea(`character.bio.${k}`, { label, rows: 3, grow: true });
+  return `
+  ${VOICE_FIELDS.map(([k, title, ph]) => `<section class="card"><h2>${title}</h2>${textarea(`character.voice.${k}`, { aria: title, placeholder: ph, rows: 2, grow: true })}</section>`).join('')}
+  <section class="card">
+    <h2>Goals &amp; hooks</h2>
+    <p class="hint">What your character is after. Tick goals off as you reach them.</p>
+    ${checklist('character.voice.goals', 'Goal')}
+  </section>
+  <section class="card">
+    <h2>In-character lines</h2>
+    <p class="hint">Short lines to say at the table. Tap Copy to put one on the clipboard.</p>
+    <ul class="list vlines">${v.lines.map((l) => `<li><span class="grow vtext">${esc(l.text)}</span>
+      <button class="icon" data-action="copyLine" data-id="${esc(l.id)}" aria-label="Copy line: ${esc(l.text.slice(0, 40))}" title="Copy">${svgIcon('<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h8"/>')}</button>
+      <button class="icon" data-action="listRemove" data-path="character.voice.lines" data-id="${esc(l.id)}" aria-label="Remove line: ${esc(l.text.slice(0, 40))}">✕</button></li>`).join('') || '<li class="muted">No lines yet.</li>'}</ul>
+    <div class="row tight"><input class="grow" data-list-add="character.voice.lines" aria-label="Add an in-character line" placeholder="Add a line, then Enter" autocomplete="off" enterkeyhint="done"><button data-action="listAdd" data-path="character.voice.lines">Add</button></div>
+  </section>
+  <details class="card block" data-block="bio" ${openBlocks.has('bio') ? 'open' : ''}>
+    <summary>Background notes</summary>
+    ${bioField('appearance', 'Appearance')}
+    ${bioField('backstory', 'Backstory')}
+    ${bioField('allies', 'Allies & contacts')}
+    ${bioField('notes', 'Other notes')}
+    ${C().bio.personality ? bioField('personality', 'Older personality note (copied to Personality above)') : ''}
+  </details>`;
 }
 
 // ----- Campaign & data
+const snapTime = (iso) => { const d = new Date(iso); return Number.isNaN(d.getTime()) ? iso : d.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }); };
+function snapshotsCard() {
+  const snaps = readSnaps();
+  return `<section class="card" id="snapshots">
+    <h2>Snapshots</h2>
+    <p class="hint">Automatic copies of your data, kept <b>only on this device</b>: one daily, one from before your last long rest, and the 3 newest &ldquo;important&rdquo; ones (before an upgrade, an import, a restore, a Drive download, or when saved data could not be read). They are not a replacement for a downloaded backup.</p>
+    ${snaps.length ? `<ul class="snap-list">${snaps.map((x) => `<li>
+      <span class="grow"><b>${esc(snapTime(x.at))}</b><small class="muted">${esc(x.reason)} · ${Math.max(1, Math.round(x.data.length / 1024))} KB</small></span>
+      <button data-action="snapRestore" data-id="${esc(x.id)}" aria-label="Restore snapshot from ${esc(snapTime(x.at))}">Restore</button>
+      <button data-action="snapDownload" data-id="${esc(x.id)}" aria-label="Download snapshot from ${esc(snapTime(x.at))}">Download</button></li>`).join('')}</ul>` : '<p class="muted">No snapshots yet. The first one is taken on your next launch.</p>'}
+  </section>`;
+}
 function tabData() {
   const canShare = !!(navigator.canShare && navigator.canShare({ files: [backupFile(state)] }));
   return `
@@ -1394,6 +1629,8 @@ function tabData() {
       <button class="danger" data-action="reset">Delete everything</button>
     </div>
   </section>
+  ${driveCard()}
+  ${snapshotsCard()}
   <section class="card credits">
     <h2>Credits</h2>
     <p>This work includes material from the System Reference Document 5.2.1 (&ldquo;SRD 5.2.1&rdquo;) by Wizards of the Coast LLC, available at <a href="https://www.dndbeyond.com/srd" target="_blank" rel="noopener">https://www.dndbeyond.com/srd</a>. The SRD 5.2.1 is licensed under the Creative Commons Attribution 4.0 International License, available at <a href="https://creativecommons.org/licenses/by/4.0/legalcode" target="_blank" rel="noopener">https://creativecommons.org/licenses/by/4.0/legalcode</a>.</p>
@@ -1402,8 +1639,8 @@ function tabData() {
   </section>`;
 }
 
-const RENDER = { stats: tabStats, combat: tabCombat, equipment: tabEquipment, spells: tabSpells, plans: tabPlans, items: tabItems, feats: tabFeats, selected: tabSelected, journal: tabJournal, data: tabData };
-const LIST_RENDER = { equipment: equipmentList, spells: spellsList, plans: plansList, items: itemsList, feats: featsList };
+const RENDER = { stats: tabStats, combat: tabCombat, equipment: tabEquipment, spells: tabSpells, plans: tabPlans, items: tabItems, feats: tabFeats, selected: tabSelected, journal: tabJournal, npcs: tabNpcs, places: tabPlaces, factions: tabFactions, quests: tabQuests, voice: tabVoice, data: tabData };
+const LIST_RENDER = { equipment: equipmentList, spells: spellsList, plans: plansList, items: itemsList, feats: featsList, journal: () => jList('sessions'), npcs: () => jList('npcs'), places: () => jList('places'), factions: () => jList('factions'), quests: () => jList('quests') };
 
 function render() {
   applyTheme();
@@ -1417,6 +1654,7 @@ function render() {
   const navFocus = ae?.closest?.('.bnav, .seg') ? `${ae.closest('.bnav') ? '.bnav' : '.seg'} [data-key="${ae.dataset.key}"]` : '';
   view.innerHTML = `
     ${header(!combat)}
+    <div id="driveStrip" class="drive-strip ${driveStripState().empty ? 'is-empty' : ''}">${driveStripInner()}</div>
     ${combat ? '' : statusStrip(true)}
     ${sec.tabs ? subTabs(sec, tab) : ''}
     <main id="panel" ${sec.tabs ? `role="tabpanel" aria-labelledby="tab-${tab}"` : `aria-label="${sec.label}"`}>${RENDER[tab]()}</main>
@@ -1425,6 +1663,7 @@ function render() {
     ${combat ? dock() : ''}
     ${bottomNav(sec)}`;
   applyBodyFx();
+  view.querySelectorAll('textarea[data-grow]').forEach(grow);
   window.scrollTo(0, y);
   if (focused) {
     const el = [...view.querySelectorAll('[data-bind],[data-filter]')].find((x) => (x.dataset.bind || x.dataset.filter) === focused);
@@ -1434,7 +1673,7 @@ function render() {
   const seg = view.querySelector('.seg');
   const on = seg?.querySelector('[aria-selected="true"]');
   if (seg && on) seg.scrollLeft = on.offsetLeft - (seg.clientWidth - on.offsetWidth) / 2;
-  if (tab === 'data') showPersistInfo();
+  if (tab === 'data') { showPersistInfo(); ensureDrive().then(() => { (driveOn() ? driveMod.preload() : Promise.resolve()).then(paintDrive); paintDrive(); }).catch(() => {}); }
 }
 function renderList() {
   const fn = LIST_RENDER[state.ui.tab];
@@ -1453,10 +1692,10 @@ async function showPersistInfo() {
 
 // ---------- actions ----------
 // ---------- undo, haptics, toasts ----------
-// In-memory undo stack: JSON snapshots of character + sessions + campaign (not ui), taken BEFORE a mutating action.
+// In-memory undo stack: JSON snapshots of character + sessions + campaign + journal (not ui), taken BEFORE a mutating action.
 const undoStack = []; // entries { id, raw }
 let snapSeq = 0;
-const snapRaw = () => JSON.stringify({ character: state.character, sessions: state.sessions, campaign: state.campaign });
+const snapRaw = () => JSON.stringify({ character: state.character, sessions: state.sessions, campaign: state.campaign, journal: state.journal });
 function clearUndo() {
   undoStack.length = 0;
   toastRoot.querySelectorAll('.toast-undo').forEach((b) => b.remove());
@@ -1478,7 +1717,7 @@ function undo(el) {
   if (el?.dataset?.id && Number(el.dataset.id) !== top.id) return; // only the toast's own action can be undone
   undoStack.pop();
   const d = JSON.parse(top.raw);
-  Object.assign(state, { character: d.character, sessions: d.sessions, campaign: d.campaign });
+  Object.assign(state, { character: d.character, sessions: d.sessions, campaign: d.campaign, journal: d.journal });
   persist();
   if (sh) { sh.dirty = true; renderSheet(); }
   render();
@@ -1490,14 +1729,14 @@ function buzz(pattern = 10) {
   try { navigator.vibrate(pattern); } catch { /* unsupported */ }
 }
 // Snapshot, change state, save, then update the screen: 'full' re-renders, 'fast' only refreshes the calculated numbers.
-function mutate(fn, { msg = '', sub = '', vib = 10, mode = 'full', ms } = {}) {
+function mutate(fn, { msg = '', sub = '', vib = 10, mode = 'full', ms, open } = {}) {
   snap();
   fn();
   if (dropIfNoop()) return;
   persist();
   if (mode === 'full') render(); else if (mode === 'fast') refreshDerived();
   buzz(vib);
-  if (msg) toast(msg, { undo: true, sub, ms });
+  if (msg) toast(msg, { undo: true, sub, ms, open });
 }
 
 const toastRoot = document.createElement('div');
@@ -1507,7 +1746,7 @@ toastRoot.setAttribute('aria-live', 'polite');
 toastRoot.setAttribute('aria-atomic', 'true');
 document.body.appendChild(toastRoot);
 let toastTimer;
-function toast(msg, { undo: withUndo = false, sub = '', ms } = {}) {
+function toast(msg, { undo: withUndo = false, sub = '', ms, open = '' } = {}) {
   clearTimeout(toastTimer);
   let undoId = 0;
   if (withUndo) {
@@ -1517,7 +1756,7 @@ function toast(msg, { undo: withUndo = false, sub = '', ms } = {}) {
   }
   const t = document.createElement('div');
   t.className = 'toast';
-  t.innerHTML = `<span class="toast-msg"><b>${esc(msg)}</b> ${sub ? `<span>${esc(sub)}</span>` : ''}</span>${withUndo ? `<button class="toast-undo" data-action="undo" data-id="${undoId}">Undo</button>` : ''}`;
+  t.innerHTML = `<span class="toast-msg"><b>${esc(msg)}</b> ${sub ? `<span>${esc(sub)}</span>` : ''}</span>${open ? `<button class="toast-open" data-action="openEntry" data-ref="${esc(open)}">Open</button>` : ''}${withUndo ? `<button class="toast-undo" data-action="undo" data-id="${undoId}">Undo</button>` : ''}`;
   toastRoot.replaceChildren(t);
   // The toast stays while it has focus or the pointer is over it.
   const hide = () => {
@@ -1545,7 +1784,7 @@ let sh = null;
 const openerSel = (el) => (el?.dataset?.action ? `[data-action="${el.dataset.action}"]${['kind', 'id', 'key'].filter((k) => el.dataset[k] !== undefined).map((k) => `[data-${k}="${el.dataset[k]}"]`).join('')}` : '');
 function openSheet(kind, opener, init = {}) {
   if (sh) return;
-  sh = { kind, opener: openerSel(opener), amt: '', roll: 0, rolls: [], tab: 'short', clear: false, text: '', dirty: false, ...init };
+  sh = { kind, opener: openerSel(opener), amt: '', roll: 0, rolls: [], tab: 'short', clear: false, text: '', dirty: false, qk: '', f: { tags: [] }, ...init };
   view.inert = true;
   document.body.classList.add('sheet-open');
   sheetRoot.innerHTML = `
@@ -1562,6 +1801,11 @@ function openSheet(kind, opener, init = {}) {
 function confirmSheet(opener, c) { openSheet('confirm', opener, { c: { ok: 'Continue', tone: 'ok', ...c } }); }
 function closeSheet({ render: force = false } = {}) {
   if (!sh) return;
+  if (sh.kind === 'quick' && sh.qk) { // keep typed text as an in-memory draft for the next time this form opens
+    const f = sh.f;
+    if ([f.main, f.key, f.notes, f.tagIn].some((x) => (x || '').trim()) || (f.tags || []).length) qaDraft[sh.qk] = { ...f }; else delete qaDraft[sh.qk];
+  }
+  if (sh.kind === 'driveconflict') settleConflict('cancel');
   const { opener, dirty } = sh;
   sh = null;
   sheetRoot.innerHTML = '';
@@ -1653,6 +1897,22 @@ const kpKinds = ['damage', 'heal', 'cannonhp', 'coin'];
 const incapacitating = (n) => n === 'Incapacitated' || /Incapacitated/.test(CONDITION_EFFECTS[n] || '');
 const concSpells = () => SPELLS.filter((s) => s.flags.includes('C') && spellStatus(s) !== 'none').sort((a, b) => a.level - b.level || a.name.localeCompare(b.name));
 
+// Quick-add forms: main field (name/title/text), one key field, tags, optional note.
+const QUICK = {
+  session: { menu: 'Session note', hint: 'Add a line to tonight’s log', title: 'Session note', main: 'Note', ph: 'What just happened?', save: 'Add note' },
+  npc: { menu: 'NPC', hint: 'Someone you met', title: 'New NPC', main: 'Name', key: ['role', 'Role', 'e.g. innkeeper, spy'], tags: 1, note: 1, save: 'Add NPC' },
+  place: { menu: 'Place', hint: 'City, district, dungeon…', title: 'New place', main: 'Name', key: ['kind', 'Kind', 'city, district, dungeon…'], tags: 1, note: 1, save: 'Add place' },
+  faction: { menu: 'Faction', hint: 'House, guild or group', title: 'New faction', main: 'Name', key: ['goals', 'Goals', 'What do they want?'], tags: 1, note: 1, save: 'Add faction' },
+  quest: { menu: 'Quest', hint: 'A job or hook', title: 'New quest', main: 'Title', key: ['giver', 'Quest giver', 'Who asked?'], tags: 1, note: 1, save: 'Add quest' },
+  line: { menu: 'In-character line', hint: 'Something to say at the table', title: 'In-character line', main: 'Line', ph: 'Say it in character…', save: 'Add line' },
+};
+const qaDraft = {}; // unsent quick-add forms by kind
+function qaAddTags() {
+  sh.f.tags = [...new Set([...(sh.f.tags || []), ...cleanTags(sh.f.tagIn)])];
+  sh.f.tagIn = '';
+  renderSheet();
+  sheetRoot.querySelector('[data-fk="f-tagIn"]')?.focus({ preventScroll: true });
+}
 const SHEETS = {
   damage() {
     const amt = num(sh.amt);
@@ -1753,12 +2013,40 @@ const SHEETS = {
         <ul class="pick-list">${avail.map(([l, n]) => `<li><button data-action="slotPick" data-level="${l}" data-fk="sl${l}"><span>Level ${l} slot</span><small>${n} left</small></button></li>`).join('') || '<li class="muted">No spell slots left.</li>'}</ul>`,
     };
   },
+  quick() {
+    if (!sh.qk) {
+      return { title: 'Quick add', body: `<div class="qa-grid">${Object.entries(QUICK).map(([k, q]) =>
+        `<button class="qa-btn" data-action="qaPick" data-k="${k}" data-fk="qa-${k}"><b>${q.menu}</b><small>${q.hint}</small></button>`).join('')}</div>` };
+    }
+    const q = QUICK[sh.qk];
+    const f = sh.f;
+    const fld = (field, label, ph, auto) => `<label class="field"><span>${label}</span><input data-sh="f" data-field="${field}" data-fk="f-${field}" ${auto ? 'data-autofocus' : ''} autocomplete="off" maxlength="200" enterkeyhint="done" placeholder="${esc(ph || '')}" value="${esc(f[field] || '')}"></label>`;
+    return {
+      title: q.title,
+      body: `${fld('main', q.main, q.ph, true)}
+        ${q.key ? fld('key', q.key[1], q.key[2]) : ''}
+        ${q.tags ? `<div class="tags-ed"><span class="lbl">Tags</span>
+          ${(f.tags || []).length ? `<div class="tag-list">${f.tags.map((t) => `<span class="tagchip">#${esc(t)}<button class="icon" data-action="qaTagRemove" data-tag="${esc(t)}" aria-label="Remove tag ${esc(t)}">✕</button></span>`).join('')}</div>` : ''}
+          <div class="row tight"><input class="grow" data-sh="f" data-field="tagIn" data-fk="f-tagIn" aria-label="Add a tag" placeholder="Add a tag, then Enter" autocomplete="off" autocapitalize="none" maxlength="40" value="${esc(f.tagIn || '')}"><button data-action="qaTagAdd">Add tag</button></div></div>` : ''}
+        ${q.note ? `<label class="field wide"><span>Note (optional)</span><textarea data-sh="f" data-field="notes" data-fk="f-notes" rows="2" maxlength="2000">${esc(f.notes || '')}</textarea></label>` : ''}
+        <div class="sheet-actions"><button class="big" data-action="qaBack">Back</button><button class="ok big" data-action="quickSave" ${(f.main || '').trim() ? '' : 'disabled'}>${q.save}</button></div>`,
+    };
+  },
+  driveconflict() {
+    const m = sh.meta || {};
+    return {
+      title: 'Drive has newer data',
+      body: `<p>Drive has newer data from <b>${esc(m.device || 'another device')}</b> (saved ${esc(driveTime(m.savedAt || m.modifiedTime))}), and this device has changes that are not in Drive yet.</p>
+        <p class="hint"><b>Use Drive version</b> replaces this device&rsquo;s data after saving it as a snapshot (&ldquo;Before Drive download&rdquo;). <b>Keep this device&rsquo;s version</b> overwrites Drive; the Drive version is first copied to a dated &ldquo;dnd-slop-conflict&rdquo; file in the folder.</p>
+        <div class="sheet-actions"><button class="big" data-action="closeSheet">Cancel</button><button class="big" data-action="driveKeep">Keep this device&rsquo;s version</button><button class="ok big" data-action="driveUse">Use Drive version</button></div>`,
+    };
+  },
   confirm() {
     const c = sh.c;
     return {
       title: c.title,
       body: `<p>${esc(c.text)}</p>
-        <div class="sheet-actions"><button class="big" data-action="closeSheet">Cancel</button><button class="${c.tone} big" data-action="confirmGo">${esc(c.ok)}</button></div>`,
+        <div class="sheet-actions"><button class="big" data-action="closeSheet">Cancel</button>${c.download ? '<button class="big" data-action="downloadCurrent">Download current data first</button>' : ''}<button class="${c.tone} big" data-action="confirmGo">${esc(c.ok)}</button></div>`,
     };
   },
   generic() {
@@ -1836,12 +2124,13 @@ function makeCannons(mode, level = 0) {
 }
 
 const actions = {
-  tab: (el) => { setTab(el.dataset.key); commit(); window.scrollTo(0, 0); },
+  tab: (el) => { setTab(el.dataset.key); jq = ''; jtag = ''; commit(); window.scrollTo(0, 0); },
   section: (el) => {
     const sec = SECTIONS.find((x) => x.key === el.dataset.key);
     if (!sec) return;
     const last = state.ui.sub?.[sec.key];
     setTab(sec.tabs ? (sec.tabs.some(([k]) => k === last) ? last : sec.tabs[0][0]) : sec.key);
+    jq = ''; jtag = '';
     commit(); window.scrollTo(0, 0);
   },
   theme: () => { state.ui.theme = THEMES[(THEMES.indexOf(themePref()) + 1) % THEMES.length]; commit(); },
@@ -1882,8 +2171,15 @@ const actions = {
     if (path === 'character.uses.cannon') render(); // the cannon card depends on the free use
   },
   sheet: (el) => openSheet(el.dataset.kind, el, { id: el.dataset.id, key: el.dataset.key }),
-  confirmGo: () => { const run = sh?.c?.run; if (!run) return; run(); closeSheet(); },
+  confirmGo: () => { const run = sh?.c?.run; if (!run) return; if (run() === 'stay') return; closeSheet(); },
+  downloadCurrent: () => downloadFile(backupFile(state)),
   closeSheet: () => closeSheet(),
+  driveConnect: (el) => { driveFrom(el); driveConnect(); },
+  driveSync: (el) => { driveFrom(el); driveRun(true); },
+  driveRestore: (el) => { driveFrom(el); driveRestore(); },
+  driveDisconnect: () => driveDisconnect(),
+  driveUse: () => { settleConflict('drive'); closeSheet(); },
+  driveKeep: () => { settleConflict('keep'); closeSheet(); },
   undo: (el) => undo(el),
   kp: (el) => {
     const k = el.dataset.k;
@@ -1961,12 +2257,14 @@ const actions = {
   restUnroll: (el) => { sh.rolls.splice(Number(el.dataset.i), 1); renderSheet(); },
   restConfirm: () => {
     const kind = sh.tab;
+    const snapOk = kind !== 'long' || takeSnapshot(state, 'Before long rest', 'rest');
     snap();
     applyRest(C(), kind, { clearConds: kind === 'long' && sh.clear, rolls: kind === 'long' ? [] : sh.rolls });
     persist();
     closeSheet({ render: true });
     buzz(10);
-    toast(`${kind === 'long' ? 'Long' : 'Short'} rest done`, { undo: true });
+    if (kind === 'long') driveSchedule(true);
+    toast(`${kind === 'long' ? 'Long' : 'Short'} rest done`, { undo: true, sub: snapOk ? '' : 'Warning: the safety snapshot could not be saved (storage full).' });
   },
   concPick: (el) => {
     const s = SPELLS.find((x) => x.id === el.dataset.id);
@@ -2183,13 +2481,143 @@ const actions = {
   },
   addSession: () => {
     const next = state.sessions.reduce((m, s) => Math.max(m, num(s.number)), 0) + 1;
-    const s = { id: uid(), number: next, date: new Date().toISOString().slice(0, 10), ingameDate: '', title: '', summary: '', notes: '', loot: '', followUps: '' };
-    state.sessions.push(s); openSessions.add(s.id); journalQuery = '';
+    const s = newSession(next);
+    state.sessions.push(s); openCards.add(s.id); F('sessions').q = '';
     commit();
   },
   removeSession: (el) => {
     const ses = state.sessions.find((x) => x.id === el.dataset.id);
     mutate(() => { state.sessions = state.sessions.filter((x) => x.id !== el.dataset.id); }, { msg: `Session ${ses?.number ?? ''} deleted`.replace('  ', ' ') });
+  },
+  addEntry: (el) => {
+    const coll = el.dataset.coll;
+    const make = { npcs: newNpc, places: newPlace, factions: newFaction, quests: newQuest }[coll];
+    if (!make) return;
+    const e = make();
+    openCards.add(e.id);
+    Object.assign(F(coll), { q: '', tag: '' });
+    jq = ''; jtag = '';
+    mutate(() => { state.journal[coll].push(e); });
+    const card = [...view.querySelectorAll('[data-jid]')].find((x) => x.dataset.jid === e.id);
+    card?.querySelector('input')?.focus();
+  },
+  removeEntry: (el) => {
+    const [coll, id] = el.dataset.ref.split(':');
+    const e = jFind(coll, id);
+    if (!e) return;
+    mutate(() => { state.journal[coll] = state.journal[coll].filter((x) => x.id !== id); }, { msg: `Deleted ${JK[coll].one} ${jTitle(coll, e)}` });
+    openCards.delete(id);
+  },
+  addTag: (el) => {
+    const path = el.dataset.path;
+    const inp = [...view.querySelectorAll('[data-tag-add]')].find((x) => x.dataset.tagAdd === path);
+    const cur = getPath(path);
+    if (!inp || !Array.isArray(cur)) return;
+    const next = [...new Set([...cur, ...cleanTags(inp.value)])];
+    inp.value = '';
+    if (next.length !== cur.length) mutate(() => { setPath(path, next); touch(path); });
+    focusBy('data-tag-add', path);
+  },
+  removeTag: (el) => {
+    const path = el.dataset.path;
+    const cur = getPath(path);
+    if (!Array.isArray(cur)) return;
+    mutate(() => { setPath(path, cur.filter((t) => t !== el.dataset.tag)); touch(path); }, { msg: `Tag #${el.dataset.tag} removed` });
+    focusBy('data-tag-add', path);
+  },
+  listAdd: (el) => {
+    const path = el.dataset.path;
+    const inp = [...view.querySelectorAll('[data-list-add]')].find((x) => x.dataset.listAdd === path);
+    const text = (inp?.value || '').trim();
+    if (!text || !Array.isArray(getPath(path))) return;
+    const item = path.endsWith('.lines') ? { id: uid(), text } : { id: uid(), text, done: false };
+    mutate(() => { getPath(path).push(item); touch(path); });
+    focusBy('data-list-add', path);
+  },
+  listRemove: (el) => {
+    const path = el.dataset.path;
+    const it = (getPath(path) || []).find((x) => x.id === el.dataset.id);
+    if (!it) return;
+    mutate(() => { setPath(path, getPath(path).filter((x) => x.id !== it.id)); touch(path); }, { msg: `Removed "${it.text.slice(0, 30)}"` });
+    focusBy('data-list-add', path);
+  },
+  copyLine: async (el) => {
+    const l = C().voice.lines.find((x) => x.id === el.dataset.id);
+    if (!l) return;
+    const prev = document.activeElement;
+    let ok = false;
+    try { await navigator.clipboard.writeText(l.text); ok = true; } catch { ok = fallbackCopy(l.text); }
+    prev?.focus?.({ preventScroll: true });
+    toast(ok ? 'Copied' : 'Could not copy', { sub: ok ? l.text.slice(0, 60) : 'Select the line and copy it by hand.' });
+  },
+  jtag: (el) => {
+    jtag = jtag === el.dataset.val ? '' : el.dataset.val;
+    jRefresh();
+    [...view.querySelectorAll('[data-action="jtag"]')].find((x) => x.dataset.val === jtag)?.focus({ preventScroll: true });
+  },
+  openEntry: (el) => goEntry(el.dataset.ref),
+  qaPick: (el) => { sh.qk = el.dataset.k; sh.f = qaDraft[sh.qk] ? { ...qaDraft[sh.qk], tags: [...(qaDraft[sh.qk].tags || [])] } : { tags: [] }; renderSheet(); sheetRoot.querySelector('[data-autofocus]')?.focus({ preventScroll: true }); },
+  qaBack: () => { sh.qk = ''; renderSheet(); sheetRoot.querySelector('.qa-btn')?.focus({ preventScroll: true }); },
+  qaTagAdd: () => qaAddTags(),
+  qaTagRemove: (el) => { sh.f.tags = sh.f.tags.filter((t) => t !== el.dataset.tag); renderSheet(); sheetRoot.querySelector('[data-fk="f-tagIn"]')?.focus({ preventScroll: true }); },
+  quickSave: () => {
+    const q = QUICK[sh.qk];
+    const sh0 = sh.qk;
+    const f = sh.f;
+    const main = (f.main || '').trim();
+    if (!q || !main) return;
+    const fields = { tags: cleanTags([...(f.tags || []), ...cleanTags(f.tagIn)]), notes: (f.notes || '').trim() };
+    const key = (f.key || '').trim();
+    if (sh.qk === 'line') {
+      mutate(() => { C().voice.lines.push({ id: uid(), text: main }); }, { msg: 'Added in-character line', open: 'voice:' });
+    } else if (sh.qk === 'session') {
+      const day = localDay();
+      const today = state.sessions.filter((x) => x.date === day).sort((a, b) => num(b.number) - num(a.number))[0];
+      const ses = today || newSession(state.sessions.reduce((m, x) => Math.max(m, num(x.number)), 0) + 1, { date: day });
+      if (!today) ses.title = `Session ${ses.number}`;
+      const line = `[${new Date().toTimeString().slice(0, 5)}] ${main}`;
+      mutate(() => {
+        if (!today) state.sessions.push(ses);
+        ses.notes = `${ses.notes ? `${ses.notes.replace(/\s+$/, '')}\n` : ''}${line}`;
+      }, { msg: `${today ? 'Added to' : 'Started'} Session ${ses.number}`, sub: main.slice(0, 60), open: `sessions:${ses.id}` });
+      driveSchedule(true);
+    } else {
+      const coll = { npc: 'npcs', place: 'places', faction: 'factions', quest: 'quests' }[sh.qk];
+      const e = {
+        npc: () => newNpc({ name: main, role: key, ...fields }),
+        place: () => newPlace({ name: main, kind: key, ...fields }),
+        faction: () => newFaction({ name: main, goals: key, ...fields }),
+        quest: () => newQuest({ title: main, giver: key, ...fields }),
+      }[sh.qk]();
+      mutate(() => { state.journal[coll].push(e); }, { msg: `Added ${JK[coll].one} ${main}`, open: `${coll}:${e.id}` });
+    }
+    closeSheet();
+    delete qaDraft[sh0];
+  },
+  snapRestore: (el) => {
+    const snap0 = readSnaps().find((x) => x.id === el.dataset.id);
+    if (!snap0) return;
+    replaceWithSafety(el, 'Before restore', {
+      title: 'Restore this snapshot?',
+      text: `Replace everything on this device with the snapshot from ${snapTime(snap0.at)} (${snap0.reason})? Your current data is saved as a new snapshot first ("Before restore").`,
+      ok: 'Restore', tone: 'danger',
+    }, () => {
+      let next;
+      try { next = normalize(JSON.parse(snap0.data)); } catch { toast('That snapshot could not be read'); return; }
+      next.ui = state.ui;
+      state = next;
+      if (driveOn()) dv().needsConfirm = true;
+      hashCache = null;
+      clearUndo();
+      render();
+      saveNow();
+      toast('Snapshot restored');
+    });
+  },
+  snapDownload: (el) => {
+    const snap0 = readSnaps().find((x) => x.id === el.dataset.id);
+    if (!snap0) return;
+    try { downloadFile(backupFile(normalize(JSON.parse(snap0.data)), 'snapshot')); } catch { toast('That snapshot could not be read'); }
   },
   export: () => downloadFile(backupFile(state)),
   share: async () => {
@@ -2197,8 +2625,9 @@ const actions = {
     try { await navigator.share({ files: [file], title: file.name }); } catch (e) { if (e.name !== 'AbortError') downloadFile(file); }
   },
   reset: () => {
-    if (!confirm('Delete your character, campaign and all sessions from this device? Export a backup first if unsure.')) return;
+    if (!confirm('Delete your character, campaign, sessions and journal from this device? A snapshot is kept in Snapshots ("Before delete everything"). Export a backup first if unsure.')) return;
     if (!confirm('Really delete everything? This cannot be undone.')) return;
+    takeSnapshot(state, 'Before delete everything');
     state = defaultState(); clearUndo(); commit();
   },
 };
@@ -2211,6 +2640,14 @@ document.addEventListener('click', (e) => {
 });
 // Sheet: text field, checkbox, Esc to close, Tab kept inside, digits on a hardware keyboard.
 sheetRoot.addEventListener('input', (e) => {
+  if (e.target.dataset.sh === 'f') {
+    const field = e.target.dataset.field;
+    sh.f[field] = e.target.value;
+    if (field === 'tagIn' && e.target.value.includes(',')) return qaAddTags();
+    const go = sheetRoot.querySelector('[data-action="quickSave"]');
+    if (go) go.disabled = !(sh.f.main || '').trim();
+    return;
+  }
   if (e.target.dataset.sh !== 'text') return;
   sh.text = e.target.value;
   if (sh.kind === 'generic') sheetRoot.querySelector('[data-action="genericGo"]').disabled = !sh.text.trim();
@@ -2222,12 +2659,17 @@ document.addEventListener('keydown', (e) => {
   if (!sh) return;
   if (e.key === 'Escape') { e.preventDefault(); closeSheet(); return; }
   if (e.key === 'Tab') {
-    const f = [...sheetRoot.querySelectorAll('button:not(:disabled), input, [tabindex="0"]')].filter((x) => x.offsetParent !== null);
+    const f = [...sheetRoot.querySelectorAll('button:not(:disabled), input, textarea, select, [tabindex="0"]')].filter((x) => x.offsetParent !== null);
     if (!f.length) return;
     const first = f[0]; const last = f[f.length - 1];
     if (!sheetRoot.contains(document.activeElement)) { e.preventDefault(); first.focus(); }
     else if (e.shiftKey && (document.activeElement === first || document.activeElement.classList.contains('sheet'))) { e.preventDefault(); last.focus(); }
     else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    return;
+  }
+  if (e.key === 'Enter' && e.target.dataset?.sh === 'f' && e.target.tagName === 'INPUT' && !e.isComposing) {
+    e.preventDefault();
+    if (e.target.dataset.field === 'tagIn' && e.target.value.trim()) qaAddTags(); else actions.quickSave();
     return;
   }
   if (e.key === 'Enter' && e.target.dataset?.sh === 'text') {
@@ -2256,7 +2698,8 @@ view.addEventListener('keydown', (e) => {
 });
 view.addEventListener('input', (e) => {
   const el = e.target;
-  if (el.id === 'journalSearch') { journalQuery = el.value; document.getElementById('journalList').innerHTML = journalList(); return; }
+  if (el.id === 'jsearch') { jq = el.value; jRefresh(); return; }
+  if (el.dataset.tagAdd !== undefined) { if (el.value.includes(',')) actions.addTag({ dataset: { path: el.dataset.tagAdd } }); return; }
   if (el.dataset.filter) {
     const [page, key] = el.dataset.filter.split('.');
     F(page)[key] = el.type === 'checkbox' ? el.checked : el.value;
@@ -2269,14 +2712,22 @@ view.addEventListener('input', (e) => {
   const before = maxHP();
   const wasFull = num(C().hp.current) >= before;
   setPath(el.dataset.bind, readValue(el));
+  touch(el.dataset.bind);
+  if (el.dataset.grow !== undefined) grow(el);
   // Leveling up or raising CON while at full HP keeps you at full HP.
   if (wasFull && maxHP() !== before && el.dataset.bind !== 'character.hp.current') C().hp.current = maxHP();
   persist();
   refreshDerived();
 });
+view.addEventListener('keydown', (e) => {
+  const t = e.target;
+  if (e.key !== 'Enter' || e.isComposing) return;
+  if (t.dataset?.tagAdd !== undefined) { e.preventDefault(); actions.addTag({ dataset: { path: t.dataset.tagAdd } }); }
+  else if (t.dataset?.listAdd !== undefined) { e.preventDefault(); actions.listAdd({ dataset: { path: t.dataset.listAdd } }); }
+});
 view.addEventListener('change', (e) => {
   const el = e.target;
-  if (el.id === 'importFile') return importFile(el.files[0]);
+  if (el.id === 'importFile') return importFile(el);
   if (el.dataset.catalog) applyCatalog(el);
   if (el.dataset.bind && (el.hasAttribute('data-rerender') || el.type === 'checkbox' || el.tagName === 'SELECT')) setTimeout(render, 0);
 });
@@ -2290,6 +2741,16 @@ view.addEventListener('toggle', (e) => {
   const t = e.target;
   const d = t.dataset || {};
   if (d.fmore) { if (t.open) openFilters.add(d.fmore); else openFilters.delete(d.fmore); return; }
+  if (d.jcard) {
+    const [coll, id] = d.jcard.split(':');
+    const body = t.querySelector(':scope > .lazy-body');
+    if (t.open) {
+      openCards.add(id);
+      const e2 = jFind(coll, id);
+      if (!body && e2) { t.insertAdjacentHTML('beforeend', `<div class="lazy-body">${jBody(coll, e2)}</div>`); t.querySelectorAll('textarea[data-grow]').forEach(grow); }
+    } else { openCards.delete(id); body?.remove(); }
+    return;
+  }
   if (d.lazy) {
     const [kind, id] = d.lazy.split(':');
     const set = kind === 'spell' ? openSpells : openBlocks;
@@ -2302,9 +2763,6 @@ view.addEventListener('toggle', (e) => {
     return;
   }
   if (d.block) { if (t.open) openBlocks.add(d.block); else openBlocks.delete(d.block); return; }
-  const id = d.session;
-  if (!id) return;
-  if (t.open) openSessions.add(id); else openSessions.delete(id);
 }, true);
 
 // Picking a base weapon/armor fills in its numbers (and the name when empty); everything stays editable.
@@ -2325,24 +2783,359 @@ function applyCatalog(el) {
   persist();
 }
 
-async function importFile(file) {
-  if (!file) return;
-  try {
-    const data = JSON.parse(await file.text());
-    if (!data || typeof data !== 'object' || !data.character) throw new Error('This is not a backup from this app.');
-    if (!confirm('Replace everything on this device with the imported backup?')) return;
-    state = normalize(data);
-    clearUndo();
-    commit();
-    toast('Backup imported');
-  } catch (err) {
-    alert(`Import failed: ${err.message}`);
+// ---------- Google Drive ----------
+// Local storage always saves first; Drive is a mirror. Only the user's taps request a Google token (pop-up), never a timer.
+const dv = () => state.ui.drive;
+const driveOn = () => !!dv()?.connected;
+const driveTokenOk = () => !!driveMod?.hasToken();
+function ensureDrive() {
+  return (driveLoading ||= import('./drive.js').then((m) => (driveMod = m)).catch((e) => { driveLoading = null; throw e; }));
+}
+function dataHash() { // FNV-1a over the saved data without ui (ui holds tab, filters and the Drive metadata itself)
+  if (hashCache !== null) return hashCache;
+  const { ui, ...rest } = state; // eslint-disable-line no-unused-vars
+  const s = JSON.stringify(rest);
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+  return (hashCache = `${(h >>> 0).toString(16)}-${s.length}`);
+}
+const driveDirty = () => dataHash() !== dv().syncedHash;
+// The Drive file: the same content as a backup, without ui.drive, plus savedAt and a short device label.
+function driveText() {
+  return JSON.stringify({ ...state, ui: { ...state.ui, drive: undefined }, savedAt: new Date().toISOString(), device: driveMod.deviceLabel() }, null, 2);
+}
+function keepDriveMeta(next) { next.ui.drive = state.ui.drive; return next; }
+function replaceFromDrive(data) {
+  const next = { ...data };
+  delete next.savedAt; delete next.device;
+  const ui = state.ui; // the local ui (tab, filters, Drive metadata) is kept
+  state = normalize(next);
+  state.ui = ui;
+  hashCache = null;
+  clearUndo();
+  render();
+}
+const driveHost = {
+  isDirty: () => driveDirty(),
+  upload: () => { saveNow(); return { text: driveText(), hash: dataHash() }; },
+  validate: (d) => { if (!isBackup(d)) return false; try { normalize({ ...d }); return true; } catch { return false; } },
+  tooNew: (d) => Number(d.version) > SCHEMA_VERSION,
+  save: () => saveNow(),
+  today: () => localDay(),
+  markSynced: (h) => { dv().syncedHash = h; },
+  applyRemote: (data, meta) => {
+    const ok = takeSnapshot(state, 'Before Drive download');
+    if (!ok && driveDirty()) throw new Error('A safety snapshot could not be saved (storage full), so nothing was changed');
+    replaceFromDrive(data);
+    dv().syncedHash = dataHash();
+    dv().needsConfirm = false;
+    saveNow();
+    toast('Updated from Drive', { sub: meta?.device ? `Saved on ${meta.device}` : '' });
+  },
+  ask: (meta) => new Promise((resolve) => {
+    if (sh) { resolve('cancel'); return; }
+    driveAsk = resolve;
+    openSheet('driveconflict', null, { meta });
+  }),
+};
+const driveFrom = (el) => { driveRt.from = `${el.closest('#driveStrip') ? '#driveStrip' : '#driveStatus'} [data-action="${el.dataset.action}"]`; };
+function settleConflict(choice) { const r = driveAsk; driveAsk = null; r?.(choice); }
+
+// Button text while sign-in is being prepared: the first tap loads Google's script, the second opens the pop-up.
+function signLabel(def, intent) {
+  if (driveRt.prep === 'preparing' && driveRt.intent === intent) return 'Preparing sign-in…';
+  if (driveRt.prep === 'ready' && driveRt.intent === intent) return intent === 'connect' ? 'Sign in with Google' : intent === 'restore' ? 'Sign in to restore' : 'Sign in to sync';
+  return def;
+}
+const driveTime = (iso) => (iso ? snapTime(iso) : 'never');
+// The strip under the header: a button when a tap is needed, plus a persistent live region for messages.
+function driveStripState() {
+  const d = dv();
+  const on = driveOn();
+  const need = on && (!driveTokenOk() || driveRt.review || d.needsConfirm);
+  const base = d.needsConfirm ? 'Upload imported data to Drive?' : driveRt.review ? 'Drive has newer data: review' : 'Sync to Drive';
+  const off = driveRt.busy || driveRt.prep === 'preparing';
+  const btn = need ? `<button class="drive-btn" data-action="driveSync" ${off ? 'disabled aria-busy="true"' : ''}>${driveRt.busy ? 'Syncing…' : signLabel(base, 'sync')}</button>` : '';
+  const msg = on ? driveRt.msg : '';
+  return { btn, msg, empty: !btn && !msg };
+}
+const driveStripInner = () => { const s = driveStripState(); return `<span id="driveStripBtn">${s.btn}</span><small id="driveStripMsg" class="muted" role="status" aria-live="polite">${esc(s.msg)}</small>`; };
+function driveStatusHtml() {
+  const d = dv();
+  const on = driveOn();
+  const st = !on ? 'Not connected' : driveRt.busy ? 'Connected · syncing…' : driveTokenOk() ? 'Connected' : 'Connected · sign-in pass expired (tap Sync now)';
+  return `<p><b>Status:</b> ${esc(st)}</p>
+    ${on ? `<p><b>Last sync:</b> ${esc(driveTime(d.lastSyncAt))}${driveDirty() ? ' · changes on this device not synced yet' : ''}</p>` : ''}
+    <p><b>File:</b> Drive › DnD Slop › dnd-slop-save.json</p>
+    <div class="row">
+      ${on ? `<button class="ok" data-action="driveSync" ${driveRt.busy || driveRt.prep === 'preparing' ? 'disabled' : ''}>${signLabel('Sync now', 'sync')}</button>
+        <button data-action="driveRestore" ${driveRt.busy || driveRt.prep === 'preparing' ? 'disabled' : ''}>${signLabel('Restore from Drive', 'restore')}</button>
+        <button class="danger" data-action="driveDisconnect">Disconnect</button>`
+    : `<button class="ok" data-action="driveConnect" ${driveRt.busy || driveRt.prep === 'preparing' ? 'disabled' : ''}>${signLabel('Connect Google Drive', 'connect')}</button>`}
+    </div>`;
+}
+function driveCard() {
+  return `<section class="card" id="drive">
+    <h2>Google Drive</h2>
+    <div id="driveStatus"><div id="driveBody">${driveStatusHtml()}</div><p id="driveMsg" class="warn" role="status" aria-live="polite">${esc(driveRt.msg)}</p></div>
+    <p class="hint">Saves only to a DnD Slop folder in your own Google Drive; the app can&rsquo;t see your other files. Your data is saved on this device first; Drive is a copy. A daily backup is kept there too (the last 7).</p>
+    <p class="hint">Disconnect revokes access when you&rsquo;re signed in. To remove this app&rsquo;s access at any time, visit <a href="https://myaccount.google.com/permissions" target="_blank" rel="noopener">myaccount.google.com/permissions</a>.</p>
+    <p class="hint">While the app is in Google&rsquo;s testing mode, Google may ask you to approve again about every 7 days, and the sign-in pass expires about hourly: then a &ldquo;Sync to Drive&rdquo; button appears and one tap renews it.</p>
+  </section>`;
+}
+// Repaints the Drive strip and card in place (no full render), keeping keyboard focus on the same button.
+// The message areas are persistent live regions: only their text changes.
+function paintDrive() {
+  const ae = document.activeElement;
+  const where = ae?.closest?.('#driveStrip') ? '#driveStrip' : ae?.closest?.('#driveStatus') ? '#driveStatus' : '';
+  const act = where ? ae.dataset.action : '';
+  const lost = !ae || ae === document.body || ae.disabled;
+  const s = document.getElementById('driveStrip');
+  if (s) {
+    const st = driveStripState();
+    s.classList.toggle('is-empty', st.empty);
+    const b = document.getElementById('driveStripBtn');
+    if (b) b.innerHTML = st.btn;
+    const m = document.getElementById('driveStripMsg');
+    if (m && m.textContent !== st.msg) m.textContent = st.msg;
   }
+  const c = document.getElementById('driveBody');
+  if (c) c.innerHTML = driveStatusHtml();
+  const dm = document.getElementById('driveMsg');
+  if (dm && dm.textContent !== driveRt.msg) dm.textContent = driveRt.msg;
+  if (act) document.querySelector(`${where} [data-action="${act}"]`)?.focus({ preventScroll: true });
+  if (driveRt.from && !driveRt.busy && driveRt.prep !== 'preparing') { // after a tap-started run: focus the re-enabled button
+    const target = document.querySelector(driveRt.from) || document.querySelector('#driveStatus [data-action="driveSync"]');
+    if (lost && target && !target.disabled) target.focus({ preventScroll: true });
+    driveRt.from = '';
+  }
+}
+let expiryTimer = 0;
+function watchExpiry() {
+  clearTimeout(expiryTimer);
+  const ms = driveMod?.tokenMsLeft?.() ?? 0;
+  if (ms > 0) expiryTimer = setTimeout(paintDrive, Math.min(ms + 200, 2 ** 30));
+}
+
+// Auto sync: 15 s after the last change (immediately after a long rest or a session note), never more than once per 15 s.
+const driveGap = () => (typeof window.__driveDebounceMs === 'number' ? window.__driveDebounceMs : 15000); // test hook
+function driveSchedule(immediate = false) {
+  if (!driveMod || !driveOn() || !driveTokenOk()) return;
+  clearTimeout(driveTimer);
+  const wait = Math.max(immediate ? 0 : driveGap(), driveLastRun + driveGap() - Date.now());
+  driveTimer = setTimeout(() => driveRun(false), wait);
+}
+const driveErr = (e) => (e && e.message ? String(e.message) : 'Drive sync failed');
+// interactive = started by a tap: may open the Google pop-up and the conflict sheet.
+async function driveRun(interactive, { confirmed = false } = {}) {
+  if (!driveOn()) return;
+  if (driveRt.busy) { if (!interactive) driveRt.again = true; return; }
+  if (navigator.onLine === false) {
+    driveRt.msg = 'Offline — will sync when you tap Sync';
+    paintDrive();
+    if (interactive) toast(driveRt.msg);
+    return;
+  }
+  if (!driveTokenOk() && interactive) { beginSignIn('sync'); return; } // synchronous: nothing awaited before the pop-up request
+  if (interactive && dv().needsConfirm && !confirmed && driveTokenOk()) { openImportConfirm(); return; }
+  const ep = driveRt.epoch;
+  driveRt.busy = true;
+  driveRt.msg = '';
+  paintDrive();
+  try {
+    await ensureDrive();
+    if (!driveTokenOk()) return; // an expired pass is never renewed without a tap
+    driveLastRun = Date.now();
+    if (!interactive) {
+      if (dv().needsConfirm || !driveDirty()) return; // imported data is never uploaded without a tap
+      if (driveRt.review) { // a conflict waits for review: only look at the remote time, download nothing
+        const m = await driveMod.peekRemote(dv());
+        if (!m || m === driveRt.reviewMtime) return;
+        driveRt.review = false;
+      }
+    }
+    saveNow();
+    const r = await driveMod.sync(driveHost, dv(), { interactive, beforeImport: !!dv().needsConfirm });
+    if (ep !== driveRt.epoch) return;
+    if (r.status === 'conflict') { driveRt.review = true; driveRt.reviewMtime = r.modifiedTime || ''; driveRt.msg = 'Drive has newer data than this device.'; }
+    else if (r.status !== 'cancelled') driveRt.review = false;
+    if (r.status === 'uploaded' || r.status === 'downloaded' || r.status === 'uptodate') dv().needsConfirm = false;
+    if (r.status === 'uploaded' && interactive) toast('Synced to Drive');
+    else if (r.status === 'uptodate' && interactive) toast('Drive is up to date');
+  } catch (e) {
+    if (ep === driveRt.epoch) { driveRt.msg = driveErr(e); toast(driveRt.msg); }
+  } finally {
+    if (ep === driveRt.epoch) {
+      driveRt.busy = false;
+      if (sh?.kind === 'driveconflict') closeSheet(); else settleConflict('cancel');
+      if (driveOn()) saveNow();
+      paintDrive();
+      if (driveRt.again) { driveRt.again = false; driveSchedule(); }
+    }
+  }
+}
+function openImportConfirm() {
+  confirmSheet(null, {
+    title: 'Upload imported data to Drive?',
+    text: 'This device now holds data you imported or restored from a snapshot. Uploading replaces the copy in Drive. The current Drive copy is first saved in the DnD Slop folder as dnd-slop-before-import-… .json.',
+    ok: 'Upload', tone: 'danger',
+    run: () => { driveRun(true, { confirmed: true }); },
+  });
+}
+// Sign-in in two steps when Google's script is not loaded yet: the first tap prepares ("Preparing sign-in…"), the second
+// tap calls requestAccessToken() synchronously (a pop-up needs a fresh user gesture, so nothing may be awaited before it).
+function beginSignIn(intent) {
+  if (driveRt.busy || driveRt.prep === 'preparing') return;
+  if (driveMod?.isReady()) { // one tap is enough
+    const pr = driveMod.requestToken();
+    driveRt.busy = true; driveRt.msg = ''; driveRt.prep = ''; driveRt.intent = '';
+    paintDrive();
+    afterToken(intent, pr, driveRt.epoch);
+    return;
+  }
+  driveRt.prep = 'preparing'; driveRt.intent = intent; driveRt.msg = '';
+  paintDrive();
+  ensureDrive().then(() => driveMod.prepare()).then(() => {
+    driveRt.prep = 'ready';
+    paintDrive();
+    const sel = { connect: '#driveStatus [data-action="driveConnect"]', sync: '#driveStrip [data-action="driveSync"], #driveStatus [data-action="driveSync"]', restore: '#driveStatus [data-action="driveRestore"]' }[intent];
+    document.querySelector(sel)?.focus({ preventScroll: true });
+    toast('Sign-in is ready', { sub: 'Tap the button again to sign in with Google' });
+  }).catch((e) => {
+    driveRt.prep = ''; driveRt.intent = '';
+    driveRt.msg = driveErr(e);
+    toast(driveRt.msg);
+    paintDrive();
+  });
+}
+async function afterToken(intent, pr, ep) {
+  try {
+    await pr;
+    watchExpiry();
+  } catch (e) {
+    if (ep !== driveRt.epoch) return; // disconnected meanwhile
+    driveRt.busy = false;
+    driveRt.msg = driveErr(e);
+    toast(driveRt.msg);
+    paintDrive();
+    return;
+  }
+  if (ep !== driveRt.epoch) return;
+  driveRt.busy = false;
+  if (intent === 'connect') {
+    dv().connected = true;
+    saveNow();
+    toast('Connected to Google Drive');
+    paintDrive();
+    await driveRun(true);
+  } else if (intent === 'restore') { paintDrive(); await driveRestoreGo(); } else { paintDrive(); await driveRun(true); }
+}
+function driveConnect() { beginSignIn('connect'); }
+function driveRestore() {
+  if (driveRt.busy || !driveOn()) return;
+  if (!driveTokenOk()) { beginSignIn('restore'); return; }
+  driveRestoreGo();
+}
+async function driveRestoreGo() {
+  driveRt.busy = true; driveRt.msg = ''; paintDrive();
+  let got = null;
+  try {
+    await ensureDrive();
+    got = await driveMod.download(driveHost, dv());
+    if (!got) toast('No save file in Drive yet');
+  } catch (e) {
+    driveRt.msg = driveErr(e);
+    toast(driveRt.msg);
+  }
+  driveRt.busy = false;
+  paintDrive();
+  if (!got) return;
+  const { data, modifiedTime, meta } = got;
+  try { normalize({ ...data }); } catch { toast('The Drive file could not be read'); return; }
+  replaceWithSafety(null, 'Before Drive download', {
+    title: 'Restore from Drive?',
+    text: `Replace everything on this device with the copy in Drive from ${meta.device}, saved ${driveTime(meta.savedAt || modifiedTime)}. The current data is saved as a snapshot first ("Before Drive download").`,
+    ok: 'Restore', tone: 'danger',
+  }, () => {
+    replaceFromDrive(data);
+    Object.assign(dv(), { lastRemoteModified: modifiedTime, lastSyncAt: new Date().toISOString(), syncedHash: dataHash(), needsConfirm: false });
+    saveNow();
+    toast('Restored from Drive');
+  });
+}
+// Usable at any time, even while a sync or sign-in is in progress.
+async function driveDisconnect() {
+  clearTimeout(driveTimer);
+  driveRt.epoch++;
+  Object.assign(driveRt, { busy: false, prep: '', intent: '', again: false, from: '', msg: '', review: false });
+  driveMod?.abortPending('Disconnected');
+  if (sh?.kind === 'driveconflict') closeSheet(); else settleConflict('cancel');
+  Object.assign(dv(), { connected: false, folderId: '', fileId: '', lastSyncAt: '', lastRemoteModified: '', syncedHash: '', backupDay: '', needsConfirm: false });
+  saveNow();
+  paintDrive();
+  try { await ensureDrive(); await driveMod.revokeAccess(); } catch { /* revoking is best effort */ }
+  toast('Disconnected from Google Drive', { sub: 'Your files in Drive stay there; delete them in Drive if you like.' });
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && driveMod) paintDrive(); });
+
+// Import: read and check the file, ask in a sheet, snapshot the current data, then replace it (normalize() migrates older backups).
+async function importFile(input) {
+  const file = input.files[0];
+  if (!file) return;
+  let data;
+  try {
+    data = JSON.parse(await file.text());
+    if (!isBackup(data)) throw new Error('This is not a backup from this app.');
+    normalize(data);
+  } catch (err) {
+    input.value = '';
+    alert(`Import failed: ${err.message}`);
+    return;
+  }
+  input.value = '';
+  replaceWithSafety(null, 'Before import', {
+    title: 'Import this backup?',
+    text: 'Everything on this device is replaced with the imported backup. The current data is saved as a snapshot first, so you can restore it from Campaign & data.',
+    ok: 'Import', tone: 'danger',
+  }, () => {
+    state = keepDriveMeta(normalize(data));
+    if (driveOn()) dv().needsConfirm = true; // imported data reaches Drive only after a tap
+    hashCache = null;
+    clearUndo();
+    render();
+    saveNow();
+    toast('Backup imported');
+  });
+}
+// Confirm sheet for actions that replace all data: takes a safety snapshot first; if that fails, says so and offers a download.
+function replaceWithSafety(opener, reason, c, apply) {
+  let warned = false;
+  confirmSheet(opener, {
+    ...c,
+    run: () => {
+      if (!warned && !takeSnapshot(state, reason)) {
+        warned = true;
+        sh.c = { ...sh.c, text: 'The safety copy of your current data could not be saved (storage is full or blocked). You can download your current data first, or continue without it.', download: true, ok: 'Continue anyway' };
+        renderSheet();
+        return 'stay';
+      }
+      apply();
+    },
+  });
+}
+function fallbackCopy(text) {
+  const ta = document.createElement('textarea');
+  ta.value = text; ta.setAttribute('readonly', ''); ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0';
+  document.body.appendChild(ta); ta.select(); ta.setSelectionRange(0, text.length);
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch { /* blocked */ }
+  ta.remove();
+  return ok;
 }
 
 window.addEventListener('storage', (e) => {
   if (e.key !== KEY || !e.newValue) return;
-  try { const { tab, sub } = state.ui; state = normalize(JSON.parse(e.newValue)); Object.assign(state.ui, { tab, sub }); clearUndo(); render(); } catch { /* ignore */ }
+  try { const { tab, sub } = state.ui; state = normalize(JSON.parse(e.newValue)); Object.assign(state.ui, { tab, sub }); hashCache = null; clearUndo(); render(); } catch { /* ignore */ }
 });
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') save(state); });
 window.addEventListener('pagehide', () => save(state));
@@ -2353,3 +3146,4 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
 }
 
 render();
+if (loadInfo.unreadable) toast('Saved data couldn’t be read — a copy is in Snapshots', { ms: 15000 });

@@ -250,7 +250,7 @@ a { color: var(--blueprint); text-underline-offset: 3px; }
   background: transparent; border: 0; border-top: 3px solid transparent; border-radius: 0; color: var(--ink-2);
   font-size: var(--fs-xs); font-weight: 600; letter-spacing: 0; line-height: var(--lh-tight);
 }
-.bnav svg, .theme-btn svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.bnav svg, .theme-btn svg, .add-btn svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .bnav button[aria-current="page"] {
   color: var(--ink); border-top-color: var(--ember); background: linear-gradient(var(--ember-soft), transparent 70%);
   box-shadow: 0 -6px 12px -8px var(--ember-glow);
@@ -392,11 +392,43 @@ button.icon { width: var(--hit); padding: 0; flex: 0 0 auto; }
 .tag.on { background: var(--ember-soft); border-color: var(--ember); }
 
 /* ---- Journal ---- */
-#journalSearch { margin: var(--s-2) 0 var(--s-3); }
+#jsearch { margin: 0 0 var(--s-3); }
 summary { cursor: pointer; min-height: var(--hit); }
-.session summary { display: flex; gap: var(--s-3); align-items: center; list-style: none; }
-.session summary::-webkit-details-marker { display: none; }
-.session[open] summary { margin-bottom: var(--s-3); }
+
+.hero-btns { display: flex; gap: var(--s-2); flex: 0 0 auto; }
+.add-btn { background: linear-gradient(var(--btn-a), var(--btn-b)); color: var(--on-btn); border-color: var(--brass-2); }
+.jcard { padding: var(--s-1) var(--s-3); scroll-margin-top: 7rem; }
+.jcard > summary { display: flex; align-items: center; gap: var(--s-2); list-style: none; }
+.jcard > summary::-webkit-details-marker { display: none; }
+.jcard[open] > summary { margin-bottom: var(--s-1); }
+.jcard:not([open]) { content-visibility: auto; contain-intrinsic-size: auto 4.25rem; } /* long journal lists: skip layout/paint of cards that are off screen */
+.jsum { display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto; padding: var(--s-1) 0; }
+.jsum b, .jsum small { overflow-wrap: anywhere; }
+.jbadge, .jprog { flex: 0 0 auto; font-size: var(--fs-xs); font-weight: 700; padding: 2px var(--s-2); border: 1px solid currentColor; border-radius: var(--r-pill); color: var(--ink-3); }
+.jprog { color: var(--ink-2); }
+.b-friendly, .b-done { color: var(--ok); }
+.b-hostile, .b-failed { color: var(--bad); }
+.b-active { color: var(--ember); }
+:root[data-theme="light"] .b-active { color: var(--ember-2); }
+.empty { text-align: center; padding: var(--s-3) 0; }
+.tags-ed { margin: var(--s-3) 0; }
+.tags-ed .lbl { display: block; font-size: var(--fs-xs); font-weight: 600; color: var(--ink-3); text-transform: uppercase; letter-spacing: .06em; }
+.tag-list { display: flex; flex-wrap: wrap; gap: var(--s-2); margin: var(--s-1) 0; }
+.tagchip { display: inline-flex; align-items: center; min-height: var(--hit); padding-left: var(--s-3); border: 1px solid var(--line); border-radius: var(--r-pill); background: var(--card); font-size: var(--fs-sm); overflow-wrap: anywhere; }
+.tagchip button.icon { border: 0; background: transparent; color: var(--ink-2); }
+.steps li.done input { text-decoration: line-through; color: var(--ink-3); }
+.steps input, .vlines .vtext { min-width: 0; }
+.vlines .vtext { overflow-wrap: anywhere; padding: var(--s-2) 0; }
+.jres { list-style: none; margin: 0; padding: 0; }
+.jres button { display: flex; width: 100%; justify-content: flex-start; text-align: left; gap: var(--s-2); margin-bottom: var(--s-2); }
+.snap-list { list-style: none; margin: 0; padding: 0; }
+.snap-list li { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); padding: var(--s-2) 0; border-bottom: 1px solid var(--line); }
+.snap-list li:last-child { border-bottom: 0; }
+.snap-list .grow { display: flex; flex-direction: column; min-width: 9rem; }
+.qa-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s-2); }
+.qa-btn { flex-direction: column; align-items: flex-start; justify-content: center; text-align: left; min-height: 76px; padding: var(--s-3); gap: 2px; }
+.qa-btn b { font-size: var(--fs-md); }
+.qa-btn small { font-weight: 400; color: var(--ink-3); }
 
 footer { text-align: center; font-size: var(--fs-sm); padding: var(--s-3); color: var(--ink-3); }
 #saveStatus.error { color: var(--bad); font-weight: 700; }
@@ -418,7 +450,7 @@ body.sheet-open #toasts { bottom: auto; top: calc(env(safe-area-inset-top) + var
 .toast-msg b { font-weight: 700; }
 .toast-msg span { color: var(--on-plate-2); }
 .toast-msg span:not(:empty) { color: var(--on-plate); font-weight: 600; }
-.toast-undo { flex: 0 0 auto; min-width: var(--hit); color: var(--on-plate); border-color: var(--brass-2); background: var(--ember-soft); }
+.toast-undo, .toast-open { flex: 0 0 auto; min-width: var(--hit); color: var(--on-plate); border-color: var(--brass-2); background: var(--ember-soft); }
 @keyframes toast-in { from { opacity: 0; transform: translateY(8px); } }
 
 /* ---- Filters, chips, flags ---- */
@@ -477,7 +509,7 @@ body.sheet-open #toasts { bottom: auto; top: calc(env(safe-area-inset-top) + var
 .sd-long dd p:first-child { margin-top: 2px; }
 .spell-desc p { margin: var(--s-2) 0 0; font-size: var(--fs-sm); overflow-wrap: anywhere; }
 .sd-src { font-size: var(--fs-sm) !important; }
-.sd-src a, .credits a { display: inline-flex; align-items: center; min-height: var(--hit); padding: 0 var(--s-1); color: var(--blueprint); overflow-wrap: anywhere; }
+.sd-src a, .credits a, #drive a { display: inline-flex; align-items: center; min-height: var(--hit); padding: 0 var(--s-1); color: var(--blueprint); overflow-wrap: anywhere; }
 .credits p { font-size: var(--fs-sm); overflow-wrap: anywhere; }
 .sd-note { font-style: italic; color: var(--warn); font-size: var(--fs-sm) !important; }
 
@@ -788,3 +820,13 @@ button.big { min-height: 52px; font-size: var(--fs-md); }
   :root { --dur-fast: 0ms; --dur: 0ms; }
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
+
+/* add rows: input and its button share a line */
+.row > input.grow { width: auto; flex: 1 1 8rem; min-width: 0; }
+
+/* ---- Google Drive: "Sync to Drive" strip under the header ---- */
+.drive-strip { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); margin: var(--s-2) 0; }
+.drive-btn { border-color: var(--brass); color: var(--ink); background: color-mix(in srgb, var(--brass) 14%, var(--card)); border-radius: var(--r-pill); padding-inline: var(--s-4); }
+.drive-strip small { flex: 1 1 10rem; min-width: 0; }
+#driveStripMsg:empty, #driveMsg:empty { margin: 0; }
+.drive-strip.is-empty { margin: 0; }

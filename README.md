@@ -6,7 +6,7 @@ It works offline, installs like an app on Android and Windows, and needs no acco
 
 ## Navigation and theme
 
-A fixed bottom bar has five sections: **Combat**, **Spells**, **Workshop** (Equipment & bag, Magic items, Plans), **Journal** and **Character** (Stats, Feats, Selected, Campaign & data). Sections with several pages show a tab strip at the top and remember the last one you used. The header has a theme button that cycles Dark (default), Light (paper) and Auto (follows the device); the choice is saved on the device.
+A fixed bottom bar has five sections: **Combat**, **Spells**, **Workshop** (Equipment & bag, Magic items, Plans), **Journal** (Sessions, NPCs, Places, Factions, Quests) and **Character** (Stats, Voice, Feats, Selected, Campaign & data). Sections with several pages show a tab strip at the top and remember the last one you used. The header has a **＋ Quick add** button (session note, NPC, place, faction, quest or in-character line, from any page) and a theme button that cycles Dark (default), Light (paper) and Auto (follows the device); the choice is saved on the device.
 
 ## Pages
 
@@ -20,8 +20,9 @@ A fixed bottom bar has five sections: **Combat**, **Spells**, **Workshop** (Equi
 | **Magic items** | Non-mundane items you replicated or found: rarity, type, attunement (counter against 3/4/5/6), equipped, charges, notes |
 | **Feats** | PHB 2024, Tasha's, Xanathar's and Forge of the Artificer feats (Dragonmarks, Greater Dragonmarks, Boon of Siberys), with prerequisites checked against your character. Default view "Available to me" (eligible and not yet taken), plus Taken and All, and a "Your feats" summary; taking one without meeting the prerequisite asks in a sheet |
 | **★ Selected** | Everything you've chosen in one place: spells by level, known plans, items, feats, skills, conditions |
-| **Journal** | Session notes with search |
-| **Campaign & data** | Campaign notes, and backup share/download/import |
+| **Journal** | Sub-tabs for Sessions, NPCs, Places, Factions and Quests. Every entry has tags, notes and a delete that can be undone; each list has search, tag filter chips and collapsed cards. NPCs and factions show an attitude badge, quests a status badge and step progress (2/5). A search box at the top searches the whole journal and groups the results by kind |
+| **Voice** | Personality, ideals, bonds, flaws, speech quirks, goals and hooks (a checklist), and short in-character lines with a Copy button. Old appearance/backstory notes sit in a collapsed Background notes block |
+| **Campaign & data** | Campaign notes, backup share/download/import (journal and voice are included), and **Snapshots**: automatic copies of your data kept only on this device (one daily, one before the last long rest, and the 3 newest "important" ones: before an upgrade, import, restore, delete everything, or when saved data could not be read) with Restore and Download |
 
 **Filters:** Spells (search, casting time, level, status, school, concentration, above-my-level, legacy, other official books), Plans (search, view, tier, type, attunement), Items (search, attuned/equipped, origin, type, rarity), Feats (search, view, category, book). Every filter has a **★ Selected / Known / Taken** option.
 
@@ -44,9 +45,21 @@ To run it locally instead: `python3 -m http.server 8000`, then open `http://loca
 
 ## Your data — important
 
-- Each device and browser keeps **its own copy**. Your Redmi and your Windows PCs **don't sync**.
+- Each device and browser keeps **its own copy**. Your Redmi and your Windows PCs only sync if you turn on **Google Drive** (below); otherwise they don't.
 - To move your character: **Campaign & data → Share backup** (Android: send it to Drive, WhatsApp, email…) or **Download backup**. On the other device, use **Import backup**. Importing replaces that device's data.
 - Clearing browser data deletes it. Export a backup after every session.
+
+## Google Drive sync (optional)
+
+**Campaign & data → Google Drive → Connect Google Drive** copies your save into one visible folder, **DnD Slop**, in your own Google Drive (`dnd-slop-save.json`, plus a daily backup `dnd-slop-YYYY-MM-DD.json`; the newest 7 are kept). The app asks only for the `drive.file` permission, so it **can't see any other file in your Drive**. The data is always saved on the device first; Drive is a mirror, and the app works fully offline.
+
+- **Set-up already done:** a Google Cloud OAuth client for this site exists (its public client ID is in `js/drive.js`); nothing to configure in the app.
+- **When it syncs:** about 15 s after your last change, right after a long rest and right after a quick-add session note, while the sign-in pass is valid. **Sync now**, **Restore from Drive** and **Disconnect** are in the card.
+- **Approvals:** the Google sign-in pass lasts about an hour. After that a **Sync to Drive** button appears under the header and in the card: one tap renews it (a Google pop-up may flash). While the app is in Google's *testing* mode, Google may also ask you to approve again about every 7 days.
+- **Two devices:** if Drive has newer data than your last sync and this device also has unsynced changes, a sheet lets you use the Drive version (your current data is first saved as a snapshot), keep this device's version (the Drive version is first copied to a `dnd-slop-conflict-…` file), or cancel.
+- **Privacy:** no tokens are stored on the device or in backups. Disconnect revokes access when you are signed in; to fully remove the app's access at any time, visit myaccount.google.com/permissions. Files already in Drive stay until you delete them.
+- **Imports:** after you import a backup or restore a snapshot, nothing is uploaded automatically; the next sync asks first, and the current Drive copy is saved as `dnd-slop-before-import-…` before it is replaced.
+- Not yet verified in real use: the pop-up inside the installed Android app, silent renewal of the pass, and the 7-day re-approval.
 
 ## Rules accuracy
 
@@ -67,6 +80,7 @@ Fonts Source Sans 3 and IM Fell English SC are used under the SIL Open Font Lice
 index.html, css/styles.css, sw.js, manifest.webmanifest
 js/app.js              UI and actions
 js/store.js            saving, import/export, migration from the first version
+js/drive.js            optional Google Drive sync (loaded on demand)
 js/rules.js            generic 2024 rules data
 js/data/artificer.js   class table, features, Artillerist, cannon math
 js/data/spells.js      Artificer spell list (+ Artillerist, + legacy)
