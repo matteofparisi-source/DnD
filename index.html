@@ -1,17 +1,30 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>DnD Slop</title>
   <meta name="description" content="Artificer Artillerist sheet and Eberron campaign journal (D&D 2024 rules), works offline.">
-  <meta name="theme-color" content="#2b1d12">
+  <meta name="theme-color" content="#12161b">
+  <script>
+    // Set the theme before first paint (no flash). Reads the saved UI preference; default dark. Keep colors in sync with app.js THEME_BAR.
+    (function () {
+      var t = 'dark';
+      try { var u = JSON.parse(localStorage.getItem('dnd-companion-v1')).ui; t = (u && u.theme) || 'dark'; } catch (e) { /* no saved data */ }
+      if (t === 'auto') t = window.matchMedia && matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+      if (t !== 'light') t = 'dark';
+      document.documentElement.dataset.theme = t;
+      var m = document.querySelector('meta[name="theme-color"]');
+      if (m) m.setAttribute('content', t === 'light' ? '#e4dac0' : '#12161b');
+    })();
+  </script>
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icons/icon-180.png">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="DnD Slop">
+  <link rel="preload" href="fonts/source-sans-3-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>

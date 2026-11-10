@@ -24,8 +24,8 @@ Target devices: Android (Redmi 15, Chrome) and Windows 10/11 (Edge/Chrome). READ
 - `.nojekyll` makes Pages serve files as-is. Keep it.
 
 ## File map
-- `index.html`: shell; loads `css/styles.css` and `js/app.js` (module). Everything renders into `#view`.
-- `js/app.js`: all UI, derived values, actions and event wiring (about 1500 lines). Sections, in order:
+- `index.html`: shell; loads `css/styles.css` and `js/app.js` (module). A tiny inline script sets `data-theme` from `ui.theme` before first paint. Everything renders into `#view`.
+- `js/app.js`: all UI, derived values, actions and event wiring (about 1640 lines). Sections, in order:
   - helpers (`esc`, `getPath`/`setPath`, `persist`, `commit`)
   - derived values and `calc(key)`
   - field builders (`input`, `select`, `check`, `textarea`, `pips`)
@@ -44,12 +44,12 @@ Target devices: Android (Redmi 15, Chrome) and Windows 10/11 (Edge/Chrome). READ
 - `js/data/plans.js`: `PLANS` (Replicate Magic Item, tiers 2/6/10/14; `generic` = "any item of this kind"), `PLAN_TYPES`, `TIERS`.
 - `js/data/feats.js`: `FEATS` (PHB 2024, Tasha's, Xanathar's, Eberron) with a `req` object used by `meetsReq()` in app.js. Also exports `FEAT_CATEGORIES`, `FEAT_SOURCES`.
 - `js/data/equipment.js`: `WEAPONS` and `ARMOR` catalogs (armor has `str` and `stealth`) (SRD 5.2.1 tables, checked). Picking one in the Equipment tab prefills the item.
-- `css/styles.css`: one coherent file with a single `:root` token block (light "sunlit parchment") plus a `prefers-color-scheme: dark` override ("moonlit scroll"). Magical-parchment look: grain texture on the page and tab bar only (cards stay smooth for readability), gold corner flourishes, ribbon tabs, glowing arcane pips. Fonts are self-hosted via `@font-face`.
-- `fonts/`: latin-subset woff2 files (Cinzel, Cinzel Decorative, EB Garamond; OFL licenses in `OFL-*.txt`). `img/grain.png`: tileable parchment grain overlay. Both are listed in `sw.js` `ASSETS` (not the license files).
+- `css/styles.css`: one file. Design tokens come first and are the single source of truth: colors (`--bg`, `--card`, `--ink*`, `--brass*`, `--ember*`, `--blueprint`...) in `:root` (dark, default) and `:root[data-theme="light"]` (paper); space `--s-*`, radius `--r-*`, type `--fs-*`, shadow, motion. Use tokens, not literals. "Artificer's Field Journal" look: blueprint grid, riveted cards, brass plates, ember only for active/magic/condition states. No raster textures: gradients and inline SVG only. Fonts are self-hosted via `@font-face`.
+- `fonts/`: latin woff2 subsets: Source Sans 3 (variable, body/UI) and IM Fell English SC (display: h1/h2 only), OFL licenses in `OFL-*.txt`. Both woff2 files are in `sw.js` `ASSETS`; the body font is preloaded in `index.html`.
 - `sw.js`: offline cache. `manifest.webmanifest` + `icons/`: install metadata.
 
 ## State and data
-- One state object (`version`, `character`, `campaign`, `sessions`, `ui`). It's saved as JSON in localStorage under the key `dnd-companion-v1`. Don't rename the key: existing devices would lose their data.
+- One state object (`version`, `character`, `campaign`, `sessions`, `ui`).  `ui` defaults: `tab` 'combat' (new users), `theme` 'dark', `sub`. It's saved as JSON in localStorage under the key `dnd-companion-v1`. Don't rename the key: existing devices would lose their data.
 - Inputs bind with `data-bind="dot.path"`. A `#id` segment selects an array item by `id` (e.g. `character.items.#abc.name`).
   - The input handler writes the value, saves (debounced, 250 ms) and calls `refreshDerived()`.
   - Derived numbers live in `<span data-calc="key">` elements, computed by `calc()`.
@@ -80,7 +80,9 @@ Target devices: Android (Redmi 15, Chrome) and Windows 10/11 (Edge/Chrome). READ
 - Escape every user or data string with `esc()` before putting it into HTML.
 - Buttons use `data-action="name"` plus `data-*` args, handled in the `actions` object through one delegated click listener.
 - Fields that change structure use `data-rerender`. Checkboxes and selects re-render automatically on `change`.
-- **New page:** add `tabX()`, an entry in `TABS` and one in `RENDER`. A filterable list also needs an `xList()` rendered into `<div id="list">` and an entry in `LIST_RENDER`.
+- **Navigation:** `SECTIONS` in app.js defines the five bottom-nav sections; Workshop and Character hold sub-tabs (segmented control, last one kept in `state.ui.sub`). Theme is `state.ui.theme` (`dark`|`light`|`auto`), applied by `applyTheme()`.
+- **New page:** add `tabX()`, an entry in `RENDER`, and put its key into a `SECTIONS` entry (a sub-tab of Workshop/Character, or its own section). A filterable list also needs an `xList()` rendered into `<div id="list">` and an entry in `LIST_RENDER`.
+- **Accessibility:** every interactive element must be at least 44x44px (pips and checkboxes use a larger hit area around a smaller visual), have an accessible name (`aria-label` where only a placeholder exists), and keep the `:focus-visible` ring. Text 4.5:1, big stats 7:1 in both themes; labels 13px minimum.
 - **New filter:** store it in `state.ui.f[page][key]` through `F(page)`. Build it with `chips`/`fselect`/`fsearch`/`fcheck` and apply it inside `xList()`.
   - Search uses `matchQ(page, ...texts)`.
   - Typing in a filter re-renders only the list (keeps focus); chip clicks re-render the page.
@@ -89,7 +91,7 @@ Target devices: Android (Redmi 15, Chrome) and Windows 10/11 (Edge/Chrome). READ
 - Naming: camelCase JavaScript, kebab-case CSS classes, 2-space indent, single quotes, semicolons.
 
 ## Known weak spots
-- `js/app.js` is large (about 1500 lines) and mixes views, logic and actions. Splitting it (e.g. one module per tab) is reasonable, but **only do it when the user asks**.
+- `js/app.js` is large (about 1640 lines) and mixes views, logic and actions. Splitting it (e.g. one module per tab) is reasonable, but **only do it when the user asks**.
 - No automated tests in the repo; checks are manual or ad-hoc Playwright.
 - Data lives per device and browser only: no sync between the user's phone and PCs (export/import only).
 - `confirm()`/`prompt()`/`alert()` are used for dialogs (hit dice, generic plans, cannon slot choice).

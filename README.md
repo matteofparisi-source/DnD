@@ -4,6 +4,10 @@ A character sheet and campaign journal for an **Artificer (Artillerist)** in an 
 
 It works offline, installs like an app on Android and Windows, and needs no account or server.
 
+## Navigation and theme
+
+A fixed bottom bar has five sections: **Combat**, **Spells**, **Workshop** (Equipment & bag, Magic items, Plans), **Journal** and **Character** (Stats, Feats, Selected, Campaign & data). Sections with several pages show a tab strip at the top and remember the last one you used. The header has a theme button that cycles Dark (default), Light (paper) and Auto (follows the device); the choice is saved on the device.
+
 ## Pages
 
 | Page | What's in it |
@@ -55,7 +59,7 @@ To run it locally instead: `python3 -m http.server 8000`, then open `http://loca
 
 This work includes material from the System Reference Document 5.2.1 ("SRD 5.2.1") by Wizards of the Coast LLC, available at https://www.dndbeyond.com/srd. The SRD 5.2.1 is licensed under the Creative Commons Attribution 4.0 International License, available at https://creativecommons.org/licenses/by/4.0/legalcode.
 
-Fonts Cinzel, Cinzel Decorative and EB Garamond are used under the SIL Open Font License 1.1 (see `fonts/OFL-*.txt`).
+Fonts Source Sans 3 and IM Fell English SC are used under the SIL Open Font License 1.1 (see `fonts/OFL-*.txt`).
 
 ## Project layout
 

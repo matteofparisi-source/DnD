@@ -60,7 +60,7 @@ export function defaultState() {
     },
     campaign: { name: '', dm: '', setting: 'Eberron', startDate: '', notes: '' },
     sessions: [],
-    ui: { tab: 'stats', f: {} },
+    ui: { tab: 'combat', theme: 'dark', sub: { workshop: 'equipment', character: 'stats' }, f: {} }, // theme: dark | light | auto; sub = last sub-tab per section
   };
 }
 
@@ -113,6 +113,7 @@ export function normalize(data) {
     ensureItemData(it);
     it.weapon?.damages.forEach((x) => { x.id ||= uid(); });
   }
+  if (!s.ui.sub || typeof s.ui.sub !== 'object' || Array.isArray(s.ui.sub)) s.ui.sub = { workshop: 'equipment', character: 'stats' };
   return s;
 }
 
