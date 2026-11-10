@@ -3,7 +3,8 @@ import { CONDITIONS } from './rules.js';
 export const KEY = 'dnd-companion-v1';
 export const SCHEMA_VERSION = 3;
 
-export const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
+// Ids only (never dice): random bits from the Web Crypto API plus a time suffix.
+export const uid = () => crypto.getRandomValues(new Uint32Array(2)).reduce((s, n) => s + n.toString(36).padStart(7, '0'), '').slice(0, 8) + Date.now().toString(36).slice(-4);
 
 // Item sub-objects for combat data. A magic bonus is read from names like "Weapon +1".
 export const magicBonus = (name) => Number(/\+(\d)/.exec(String(name || ''))?.[1]) || 0;
@@ -44,6 +45,7 @@ export function defaultState() {
       inspiration: false, exhaustion: 0,
       deathSaves: { success: 0, fail: 0 },
       conditions: [],
+      concentration: { id: '', name: '' }, // spell id (or '' for a custom effect) and its display name; empty name = not concentrating
       attacks: [],
       uses: {},           // feature key -> used count
       slotsUsed: [0, 0, 0, 0, 0],
@@ -60,7 +62,7 @@ export function defaultState() {
     },
     campaign: { name: '', dm: '', setting: 'Eberron', startDate: '', notes: '' },
     sessions: [],
-    ui: { tab: 'combat', theme: 'dark', sub: { workshop: 'equipment', character: 'stats' }, f: {} }, // theme: dark | light | auto; sub = last sub-tab per section
+    ui: { tab: 'combat', theme: 'dark', sub: { workshop: 'equipment', character: 'stats' }, f: {}, haptics: true }, // theme: dark | light | auto; sub = last sub-tab per section; haptics = vibrate on actions
   };
 }
 
@@ -91,6 +93,8 @@ export function normalize(data) {
   const s = merge(defaultState(), d);
   const c = s.character;
   c.level = Math.max(1, Math.min(20, Number(c.level) || 1));
+  const cc = c.concentration && typeof c.concentration === 'object' ? c.concentration : {};
+  c.concentration = { id: String(cc.id ?? ''), name: String(cc.name ?? '') };
   while (c.slotsUsed.length < 5) c.slotsUsed.push(0);
   for (const list of [c.attacks, c.items, c.feats, c.cannons, c.plans.custom, s.sessions]) list.forEach((x) => { x.id ||= uid(); });
   // v2 -> v3: attacks get a damage-component list; items get combat data; AC is computed from equipment.

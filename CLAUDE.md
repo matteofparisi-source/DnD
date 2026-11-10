@@ -25,15 +25,15 @@ Target devices: Android (Redmi 15, Chrome) and Windows 10/11 (Edge/Chrome). READ
 
 ## File map
 - `index.html`: shell; loads `css/styles.css` and `js/app.js` (module). A tiny inline script sets `data-theme` from `ui.theme` before first paint. Everything renders into `#view`.
-- `js/app.js`: all UI, derived values, actions and event wiring (about 1640 lines). Sections, in order:
+- `js/app.js`: all UI, derived values, actions and event wiring (about 2130 lines). Sections, in order:
   - helpers (`esc`, `getPath`/`setPath`, `persist`, `commit`)
   - derived values and `calc(key)`
   - field builders (`input`, `select`, `check`, `textarea`, `pips`)
   - filter builders (`chips`, `fselect`, `fsearch`, `fcheck`)
   - one `tabX()` per page (lists come from `xList()`)
   - `RENDER` / `LIST_RENDER` maps, `render()`, `renderList()`
-  - `rest()`, the `actions` object, then the event listeners
-- `js/store.js`: state shape (`defaultState`), `normalize` (merge plus migrations), `load`/`save` (localStorage), `backupFile`/`downloadFile`, `uid`, and item helpers `newItem`, `ensureItemData`, `magicBonus`, `newWeapon`/`newArmor`/`newShield`.
+  - undo/haptics/toast helpers, bottom-sheet helper and `SHEETS`, `applyRest`/`restSummary`, the `actions` object, then the event listeners
+- `js/store.js`: state shape (`defaultState`), `normalize` (merge plus migrations), `load`/`save` (localStorage), `backupFile`/`downloadFile`, `uid` (Web Crypto, never `Math.random`), and item helpers `newItem`, `ensureItemData`, `magicBonus`, `newWeapon`/`newArmor`/`newShield`.
 - `js/rules.js`: generic 2024 data and math: `ABILITIES`, `SKILLS`, `CONDITIONS`, `ALIGNMENTS`, `DAMAGE_TYPES`, `WEAPON_MASTERIES`, `XP_THRESHOLDS`, `CONDITION_EFFECTS` (one-line condition reminders), `mod`, `profBonus`, `fmt`.
 - `js/data/artificer.js`:
   - per-level tables (`PLANS_KNOWN`, `MAGIC_ITEMS`, `CANTRIPS`, `PREPARED`, `SLOTS`) read with `at(arr, level)`
@@ -49,7 +49,7 @@ Target devices: Android (Redmi 15, Chrome) and Windows 10/11 (Edge/Chrome). READ
 - `sw.js`: offline cache. `manifest.webmanifest` + `icons/`: install metadata.
 
 ## State and data
-- One state object (`version`, `character`, `campaign`, `sessions`, `ui`).  `ui` defaults: `tab` 'combat' (new users), `theme` 'dark', `sub`. It's saved as JSON in localStorage under the key `dnd-companion-v1`. Don't rename the key: existing devices would lose their data.
+- One state object (`version`, `character`, `campaign`, `sessions`, `ui`).  `ui` defaults: `tab` 'combat' (new users), `theme` 'dark', `sub`, `haptics` true (vibration toggle in Character > Campaign & data). `character.concentration` is `{ id, name }` (empty name = none). It's saved as JSON in localStorage under the key `dnd-companion-v1`. Don't rename the key: existing devices would lose their data.
 - Inputs bind with `data-bind="dot.path"`. A `#id` segment selects an array item by `id` (e.g. `character.items.#abc.name`).
   - The input handler writes the value, saves (debounced, 250 ms) and calls `refreshDerived()`.
   - Derived numbers live in `<span data-calc="key">` elements, computed by `calc()`.
@@ -57,7 +57,11 @@ Target devices: Android (Redmi 15, Chrome) and Windows 10/11 (Edge/Chrome). READ
   - Ids come from names (`slug`, or the same regex in plans/feats), so **renaming a data entry orphans saved choices** unless you migrate them.
   - "Always prepared" is computed (`alwaysPrepared()`), not stored.
 - Schema v3: `attacks[].damages` is a list of `{id, dice, type}` (flat bonus and ability mod go on the first). Items carry `qty`, `weight`, `acBonus` and a `weapon`/`armor`/`shield` sub-object by type (`ensureItemData()` in store.js adds them, parsing "+N" from the name); rarity `Mundane` items show only on the Equipment tab. `character.acAuto`/`acMisc`: AC is computed by `acInfo()` from equipped items; `ac` is used only when `acAuto` is false. `inspiration` stays in the data but has no UI.
-- `render()` puts `cond-<name>` and `exh-<n>` classes on `<body>`; CSS draws the vignettes and hero effects from them. The status strip under the header lists active conditions.
+- `render()` puts `cond-<name>` and `exh-<n>` classes on `<body>`; CSS draws the vignettes and hero effects from them. The status strip under the header lists active conditions (on Combat the same chips sit in the conditions row and open the conditions sheet). Combat page order: header plates, death-saves card (top at 0 HP, else low), glance (Initiative, Speed, Concentration), conditions row, Resources, Roll reference, Eldritch Cannon, then collapsed `<details>` blocks (Edit defense, Edit attacks; open state in `openBlocks`). Taking an Incapacitating condition (any whose `CONDITION_EFFECTS` text says Incapacitated) ends concentration.
+- **Undo:** `snap()` pushes `{id, raw}` (JSON of character + sessions + campaign, not ui) onto an in-memory stack (max 20, lost on reload). Call it BEFORE every mutating action; `mutate()` does snap, change, save, render, `buzz()` and an Undo toast. A no-op action drops its snapshot (`dropIfNoop()`, also checked in `toast(..., {undo:true})`) and shows no toast. Each toast's Undo carries its snapshot id and only undoes that action; a newer `snap()` removes older Undo buttons. The stack is cleared on typing into any `data-bind` field, backup import, storage sync and reset, so Undo can never revert typed text. Deletes have no `confirm()`.
+- **Bottom sheet:** `openSheet(kind, opener)` / `closeSheet()` / `renderSheet()` render into `#sheet-root` (outside `#view`, which gets `inert`). Kinds live in the `SHEETS` map (damage, heal, cannonhp, hd, rest, cond, conc, slot, detonate). Sheet state is the module variable `sh`; focus returns to the opener. Use sheets, not `confirm()`/`prompt()`, in combat flows. Keypad and d8 grid buttons are plain `data-action` buttons. Real dice only: no rolling or `Math.random` anywhere (`uid()` uses Web Crypto).
+- **Dock:** `dock()` is the fixed Damage / HP / Heal / Rest bar on Combat (`body.has-dock`). Hot paths (pips, HP, cannon HP) update in place through `refreshDerived()`/`syncPips()` instead of a full render; HP and resource numbers use `data-calc` keys (`hpcur`, `slotleft:i`, `useleft:key`, `cannonhp:id`...).
+- `rest()` was replaced by `applyRest(c, kind, opts)` (mutates the given character) and `restSummary()` (runs it on a copy to list the changes shown in the Rest sheet).
 - Damage components are edited with `damageEditor(path, list)` and the `addDamage`/`removeDamage` actions (`data-path` is the list path).
 - Export: `backupFile()` makes a JSON file, offered through the Web Share API (when files can be shared) or as a download. Import: JSON → `normalize()` → replaces all state. A `storage` event listener keeps open tabs in sync.
 - **Any change to the data shape needs a migration** in `normalize()`, plus a `SCHEMA_VERSION` bump. The existing v1→v2 step (generic sheet → Artificer) is the pattern. `merge()` fills in missing fields from `defaultState()`, so purely additive fields need only a default.
@@ -91,10 +95,10 @@ Target devices: Android (Redmi 15, Chrome) and Windows 10/11 (Edge/Chrome). READ
 - Naming: camelCase JavaScript, kebab-case CSS classes, 2-space indent, single quotes, semicolons.
 
 ## Known weak spots
-- `js/app.js` is large (about 1640 lines) and mixes views, logic and actions. Splitting it (e.g. one module per tab) is reasonable, but **only do it when the user asks**.
+- `js/app.js` is large (about 2130 lines) and mixes views, logic and actions. Splitting it (e.g. one module per tab) is reasonable, but **only do it when the user asks**.
 - No automated tests in the repo; checks are manual or ad-hoc Playwright.
 - Data lives per device and browser only: no sync between the user's phone and PCs (export/import only).
-- `confirm()`/`prompt()`/`alert()` are used for dialogs (hit dice, generic plans, cannon slot choice).
+- `confirm()`/`prompt()`/`alert()` remain outside combat (over-limit spells/plans, generic plan name, feat prerequisite, Delete everything, backup import).
 
 ## Keeping this file current
 - After any change that affects structure, data format, conventions, commands or features, update CLAUDE.md in the same commit. Update README.md too if the feature list changes.

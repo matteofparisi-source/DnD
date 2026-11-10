@@ -15,6 +15,7 @@ const view = document.getElementById('view');
 const openSessions = new Set();
 const openSpells = new Set();
 const openFilters = new Set();
+const openBlocks = new Set(); // open state of the collapsed editors on Combat
 let journalQuery = '';
 let addMenuOpen = false;
 
@@ -60,6 +61,7 @@ const spellDC = () => 8 + pb() + intMod();
 const spellAtk = () => pb() + intMod();
 const autoMaxHP = () => Math.max(1, 8 + am('con') + (lvl() - 1) * (5 + am('con')));
 const maxHP = () => (C().hp.auto ? autoMaxHP() : num(C().hp.max));
+const hdLeft = () => Math.max(0, lvl() - num(C().hdUsed));
 
 function alwaysPrepared() {
   const ids = new Set(['mending']);
@@ -207,6 +209,16 @@ function calc(key) {
     case 'name': return c.name || 'Unnamed Artificer';
     case 'subtitle': return [`Artificer${lvl() >= 3 ? ' (Artillerist)' : ''} ${lvl()}`, c.species].filter(Boolean).join(' · ');
     case 'hp': return `${c.hp.current}${num(c.hp.temp) ? ` +${c.hp.temp}` : ''} / ${maxHP()}`;
+    case 'hpcur': return String(num(c.hp.current));
+    case 'hpmax': return String(maxHP());
+    case 'hptemp': return num(c.hp.temp) ? `+${num(c.hp.temp)} temp` : '';
+    case 'speed': return `${num(c.speed)} ft`;
+    case 'slotleft': { const n = SLOTS[lvl() - 1][Number(arg)] || 0; return `${Math.max(0, n - num(c.slotsUsed[Number(arg)]))} / ${n}`; }
+    case 'useleft': { const n = usesMax(arg); return `${Math.max(0, n - num(c.uses[arg]))} / ${n}`; }
+    case 'hdleft': return `${hdLeft()} / ${lvl()}`;
+    case 'cannonhp': return String(num(c.cannons.find((x) => x.id === arg)?.hp));
+    case 'cannonpct': return String(Math.max(0, Math.min(100, (num(c.cannons.find((x) => x.id === arg)?.hp) / Math.max(1, 5 * lvl())) * 100)));
+    case 'cannonnote': return num(c.cannons.find((x) => x.id === arg)?.hp) <= 0 ? 'This cannon is at 0 HP: it is destroyed. Dismiss it.' : '';
     case 'hpPct': return String(Math.max(0, Math.min(100, (num(c.hp.current) / Math.max(1, maxHP())) * 100)));
     case 'ac': return String(acInfo().ac);
     case 'acText': return acInfo().text;
@@ -378,9 +390,10 @@ function header(compact = false) {
   const t = themePref();
   const label = `Theme: ${THEME_LABEL[t]}`;
   const themeBtn = `<button class="icon theme-btn" data-action="theme" aria-label="${label}" title="${label}">${svgIcon(THEME_ICONS[t])}</button>`;
+  // Combat shows HP in the dock, so its plates are AC / Prof / Spell DC / Spell atk only.
   const plates = `
-    <div class="plates" role="group" aria-label="Key stats">
-      <div class="plate plate-hp"><small>HP</small><b>${calcSpan('hp')}</b><i class="bar" data-calc="hpPct" data-calc-attr="--pct" style="--pct:${calc('hpPct')}%"></i></div>
+    <div class="plates ${compact ? '' : 'four'}" role="group" aria-label="Key stats">
+      ${compact ? `<div class="plate plate-hp"><small>HP</small><b>${calcSpan('hp')}</b><i class="bar" data-calc="hpPct" data-calc-attr="--pct" style="--pct:${calc('hpPct')}%"></i></div>` : ''}
       <div class="plate"><small>AC</small><b>${calcSpan('ac')}</b></div>
       <div class="plate"><small>Prof</small><b>${calcSpan('pb')}</b></div>
       <div class="plate"><small>Spell DC</small><b>${calcSpan('dc')}</b></div>
@@ -401,10 +414,6 @@ function header(compact = false) {
       </div>
       ${themeBtn}
     </div>${plates}
-    <div class="hero-actions">
-      <button data-action="shortRest">Short rest</button>
-      <button data-action="longRest">Long rest</button>
-    </div>
   </header>`;
 }
 
@@ -428,12 +437,18 @@ const COND_ICONS = {
 const condIcon = (name) => `<svg class="ci" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${COND_ICONS[name] || ''}</svg>`;
 const condKey = (name) => String(name).toLowerCase().replace(/[^a-z]/g, '');
 
-// Strip under the header: active conditions and exhaustion, visible on every tab.
-function statusStrip(compact = false) {
+// Chips for active conditions and exhaustion. `action` is what tapping one does: 'tab' goes to Combat, 'sheet' opens the conditions sheet.
+function statusChips(action = 'tab') {
   const c = C();
   const e = Math.min(6, num(c.exhaustion));
-  const chips = c.conditions.map((n) => `<button class="status-chip k-${condKey(n)}" data-action="tab" data-key="combat" title="${esc(CONDITION_EFFECTS[n] || n)}">${condIcon(n)}<span>${esc(n)}</span></button>`);
-  if (e) chips.unshift(`<button class="status-chip k-exhaustion x${e}" data-action="tab" data-key="combat" title="${esc(calc('exhaustion'))}">${e >= 6 ? 'Death (Exhaustion 6)' : `Exhaustion ${e}`}</button>`);
+  const attrs = action === 'sheet' ? 'data-action="sheet" data-kind="cond"' : 'data-action="tab" data-key="combat"';
+  const chips = c.conditions.map((n) => `<button class="status-chip k-${condKey(n)}" ${attrs} title="${esc(CONDITION_EFFECTS[n] || n)}">${condIcon(n)}<span>${esc(n)}</span></button>`);
+  if (e) chips.unshift(`<button class="status-chip k-exhaustion x${e}" ${attrs} title="${esc(calc('exhaustion'))}">${e >= 6 ? 'Death (Exhaustion 6)' : `Exhaustion ${e}`}</button>`);
+  return chips;
+}
+// Strip under the header on the other tabs: active conditions and exhaustion.
+function statusStrip(compact = false) {
+  const chips = statusChips('tab');
   return chips.length ? `<div class="status-strip ${compact ? 'compact' : ''}" aria-label="Active conditions">${chips.join('')}</div>` : '';
 }
 
@@ -536,61 +551,111 @@ function damageEditor(path, damages) {
   return `<div class="dmg-editor"><span class="lbl">Damage</span>${rows}<button class="ghost small" data-action="addDamage" data-path="${esc(path)}.damages">+ Add damage</button></div>`;
 }
 
+// Initiative, Speed and the concentration plate under the header (AC and Prof are already in the header plates).
+function glance() {
+  const c = C();
+  const conc = c.concentration?.name;
+  return `
+  <section class="glance" aria-label="At a glance">
+    <div class="g-tile"><small>Initiative</small><b>${calcSpan('init')}</b></div>
+    <div class="g-tile"><small>Speed</small><b>${calcSpan('speed')}</b></div>
+    <button class="g-conc ${conc ? 'on' : ''}" data-action="sheet" data-kind="conc"><small>Concentration</small><b>${conc ? esc(conc) : 'None'}</b></button>
+  </section>`;
+}
+
+// Active conditions as chips, plus the button that opens the conditions sheet.
+function condRow() {
+  const chips = statusChips('sheet');
+  return `
+  <section class="cond-row" aria-label="Conditions">
+    <div class="status-strip">${chips.join('') || '<span class="muted">No conditions</span>'}</div>
+    <button data-action="sheet" data-kind="cond" ${chips.length ? 'class="wide"' : ''}>Edit conditions</button>
+  </section>`;
+}
+
+function resourcesCard() {
+  const c = C();
+  const slots = SLOTS[lvl() - 1].map((n, i) => (n ? `<li><span class="res-info"><span class="res-name">Level ${i + 1} slots</span><span class="res-left" data-calc="slotleft:${i}">${calc(`slotleft:${i}`)}</span></span>${pips(`character.slotsUsed.${i}`, n, num(c.slotsUsed[i]), `level ${i + 1} slot`)}</li>` : '')).join('');
+  const uses = Object.keys(USES).filter((k) => usesMax(k)).map((k) => `<li><span class="res-info"><span class="res-name">${esc(USES[k].name)}</span><span class="res-left" data-calc="useleft:${k}">${calc(`useleft:${k}`)}</span></span>${pips(`character.uses.${k}`, usesMax(k), num(c.uses[k]), USES[k].name)}</li>`).join('');
+  return `
+  <section class="card">
+    <h2>Resources</h2>
+    <p class="hint">Tap a circle to spend a slot or use; tap a lit one to give it back.</p>
+    <ul class="list res-list">${slots}${uses}
+      <li><span class="res-info"><span class="res-name">Hit Dice (d8)</span><span class="res-left" data-calc="hdleft">${calc('hdleft')}</span></span><button data-action="sheet" data-kind="hd" ${lvl() - num(c.hdUsed) > 0 ? '' : 'disabled'}>Spend</button></li>
+    </ul>
+  </section>`;
+}
+
+// Modifiers to read off when rolling real dice. No rolling happens here.
+function rollReference() {
+  const c = C();
+  const tile = (label, key, mark = false, on = false) =>
+    `<div class="rr-tile"><small>${label}${mark ? `<i class="pmark ${on ? 'on' : ''}" aria-hidden="true"></i>${on ? '<span class="sr"> proficient</span>' : ''}` : ''}</small><b>${calcSpan(key)}</b></div>`;
+  const saves = ABILITIES.map((a) => tile(`${a.short} save`, `save:${a.key}`, true, !!c.saveProf[a.key])).join('');
+  const weapons = equippedItems().filter((i) => i.type === 'Weapon').map((i) => ({ name: i.name || i.weapon?.base || 'Weapon', hit: `iatk:${i.id}`, dmg: `idmg:${i.id}` }));
+  const custom = c.attacks.map((a) => ({ name: a.name || 'Attack', hit: `atk:${a.id}`, dmg: `dmg:${a.id}` }));
+  const rows = [...weapons, ...custom].map((a) => `
+    <li class="rr-atk"><span class="rr-name">${esc(a.name)}</span><b class="rr-hit">${calcSpan(a.hit)}</b><span class="rr-dmg">${calcSpan(a.dmg)}</span></li>`).join('');
+  return `
+  <section class="card">
+    <h2>Roll reference</h2>
+    <p class="hint">Add these to your d20. A dot marks a proficient saving throw.</p>
+    <div class="rr-grid">${tile('Initiative', 'init')}${tile('Spell attack', 'satk')}${tile('Spell save DC', 'dc')}${saves}</div>
+    <h3>Attacks</h3>
+    <ul class="list rr-atks">${rows || '<li class="muted">No weapon is equipped and no custom attack exists. Add one under Edit attacks.</li>'}</ul>
+  </section>`;
+}
+
 function cannonPanel() {
   const c = C();
   if (lvl() < 3) return '<section class="card"><h2>Eldritch Cannon</h2><p class="muted">Unlocks at Artificer level 3 (Artillerist).</p></section>';
   const st = cannonStats(lvl(), intMod());
-  const free = usesMax('cannon') - num(c.uses.cannon);
+  const free = Math.max(0, usesMax('cannon') - num(c.uses.cannon));
+  const room = c.cannons.length < st.count;
   const cannons = c.cannons.map((k, i) => `
-    <div class="item cannon">
-      <div class="row tight">
-        <b class="grow">Cannon ${i + 1}</b>
-        <span class="badge">AC ${st.ac}</span>
-        <label class="field xs"><span>HP / ${st.hp}</span><input type="number" inputmode="numeric" data-bind="character.cannons.#${esc(k.id)}.hp" data-type="number" value="${esc(k.hp)}"></label>
-        ${lvl() >= 9 ? `<button class="danger small" data-action="detonate" data-id="${esc(k.id)}">Detonate</button>` : ''}
-        <button class="small" data-action="dismissCannon" data-id="${esc(k.id)}">Dismiss</button>
+    <div class="cannon-card">
+      <div class="cannon-head"><b>Cannon ${i + 1}</b><span class="badge">AC ${st.ac}</span><span class="cannon-hp"><b data-calc="cannonhp:${esc(k.id)}">${num(k.hp)}</b> / ${st.hp} HP</span></div>
+      <i class="meter"><i data-calc="cannonpct:${esc(k.id)}" data-calc-attr="--pct" style="--pct:${calc(`cannonpct:${k.id}`)}%"></i></i>
+      <p class="warn" data-calc="cannonnote:${esc(k.id)}" data-show-if="cannonnote:${esc(k.id)}" ${calc(`cannonnote:${k.id}`) ? '' : 'hidden'}>${esc(calc(`cannonnote:${k.id}`))}</p>
+      <div class="cannon-steps">
+        ${[-5, -1, 1, 5].map((n) => `<button class="${n < 0 ? 'danger' : 'ok'}" data-action="cannonStep" data-id="${esc(k.id)}" data-n="${n}" aria-label="${n < 0 ? 'Damage' : 'Repair'} cannon ${i + 1} by ${Math.abs(n)}">${n < 0 ? '−' : '+'}${Math.abs(n)}</button>`).join('')}
+      </div>
+      <div class="cannon-acts">
+        <button data-action="sheet" data-kind="cannonhp" data-id="${esc(k.id)}" aria-label="Enter an HP amount for cannon ${i + 1}">Amount</button>
+        ${lvl() >= 9 ? `<button class="danger" data-action="sheet" data-kind="detonate" data-id="${esc(k.id)}">Detonate</button>` : ''}
+        <button data-action="dismissCannon" data-id="${esc(k.id)}">Dismiss</button>
       </div>
     </div>`).join('');
   return `
   <section class="card">
     <h2>Eldritch Cannon</h2>
-    <div class="cannon-top">
-      <div class="cannon-left">
-        <span class="counter">Free creations left: <b>${Math.max(0, free)} / ${usesMax('cannon')}</b></span>
-        <span class="counter">Active: <b>${c.cannons.length} / ${st.count}</b></span>
-        <button class="ok" data-action="createCannon" data-key="free" ${free > 0 && c.cannons.length < st.count ? '' : 'disabled'}>${lvl() >= 15 && c.cannons.length === 0 ? 'Create two (free)' : 'Create (free)'}</button>
-        <button data-action="createCannon" data-key="slot" ${c.cannons.length < st.count ? '' : 'disabled'}>Create with a spell slot</button>
-        ${lvl() >= 15 ? '<span class="hint">One Magic action can create two cannons. The free creation covers both; a slot pays for one, so the second needs another slot.</span>' : ''}
-      </div>
-      <div class="statcard" aria-label="Cannon stats">
-        <b class="sc-title">Eldritch Cannon</b>
-        <span class="sc-sub">Small or Tiny object</span>
-        <dl>
-          <dt>HP</dt><dd>${st.hp} <small>(5 × level)</small></dd>
-          <dt>AC</dt><dd>${st.ac}</dd>
-          <dt>Immune</dt><dd>Poison, Psychic</dd>
-          <dt>Mending</dt><dd>restores 2d6 HP</dd>
-        </dl>
-      </div>
+    <p class="cannon-state ${c.cannons.length ? 'on' : ''}"><b>${c.cannons.length ? `Active (${c.cannons.length})` : 'Not deployed'}</b>
+      <span class="counter">Free creations left: <b>${free} / ${usesMax('cannon')}</b></span></p>
+    ${cannons || '<p class="hint">Creating one takes a Magic action with Smith\'s or Woodcarver\'s Tools; it lasts 1 hour or until 0 HP.</p>'}
+    <div class="cannon-create">
+      <button class="ok" data-action="createCannon" data-key="free" ${free > 0 && room ? '' : 'disabled'}>${lvl() >= 15 && c.cannons.length === 0 ? 'Create two (free)' : 'Create (free)'}</button>
+      <button data-action="createCannon" data-key="slot" ${room ? '' : 'disabled'}>Create with a spell slot</button>
     </div>
-    ${cannons || '<p class="muted">No cannon deployed. Creating one takes a Magic action with Smith\'s or Woodcarver\'s Tools; it lasts 1 hour or until 0 HP.</p>'}
-    <table class="ref">
-      <tr><th>Mode (Bonus Action, within 60 ft; cannon may move 15 ft)</th><th>Effect</th></tr>
-      <tr><td><b>Flamethrower</b> 15-foot Cone</td><td>DEX save DC ${spellDC()}: ${st.flame}, half on success; unattended flammable objects in the Cone start burning</td></tr>
-      <tr><td><b>Force Ballista</b> 120 ft</td><td>Spell attack ${fmt(spellAtk())}: ${st.ballista}, push 5 ft</td></tr>
-      <tr><td><b>Protector</b> 10 ft</td><td>Temp HP ${st.protector} to cannon and chosen creatures</td></tr>
-      ${st.detonate ? `<tr><td><b>Detonate</b> (Reaction when it takes damage)</td><td>20 ft: DEX save DC ${spellDC()}, ${st.detonate}, half on success</td></tr>` : ''}
-      ${lvl() >= 15 ? '<tr><td><b>Fortified Position</b></td><td>Two cannons, one Bonus Action activates both; Half Cover for you and allies within 10 ft of a cannon</td></tr>' : ''}
-    </table>
+    ${lvl() >= 15 ? '<p class="hint">One Magic action can create two cannons. The free creation covers both; a slot pays for one, so the second needs another slot.</p>' : ''}
+    <h3>Modes</h3>
+    <p class="hint">Bonus Action, cannon within 60 ft; it may move 15 ft. AC ${st.ac}, immune to Poison and Psychic; Mending restores 2d6 HP.</p>
+    <ul class="modes">
+      <li><span class="mode-name"><b>Flamethrower</b><small>15-foot Cone</small></span><span class="mode-num">${st.flame}</span><span class="mode-det">DEX save DC ${spellDC()}, half on success</span></li>
+      <li><span class="mode-name"><b>Force Ballista</b><small>120 ft</small></span><span class="mode-num">${st.ballista}</span><span class="mode-det">Spell attack ${fmt(spellAtk())}, push 5 ft</span></li>
+      <li><span class="mode-name"><b>Protector</b><small>10 ft</small></span><span class="mode-num">${st.protector}</span><span class="mode-det">Temp HP to the cannon and chosen creatures</span></li>
+      ${st.detonate ? `<li><span class="mode-name"><b>Detonate</b><small>Reaction, 20 ft</small></span><span class="mode-num">${st.detonate}</span><span class="mode-det">DEX save DC ${spellDC()}, half on success</span></li>` : ''}
+    </ul>
+    ${lvl() >= 15 ? '<p class="hint"><b>Fortified Position:</b> two cannons, one Bonus Action activates both; Half Cover for you and allies within 10 ft of a cannon.</p>' : ''}
   </section>`;
 }
 
 function exhaustionMeter() {
   const e = Math.min(6, num(C().exhaustion));
-  const segs = [1, 2, 3, 4, 5, 6].map((n) => `<button class="xseg s${n} ${n <= e ? 'on' : ''}" data-action="setExhaustion" data-n="${n}" aria-label="Exhaustion ${n}" aria-pressed="${n <= e}">${n}</button>`).join('');
+  const segs = [1, 2, 3, 4, 5, 6].map((n) => `<button class="xseg s${n} ${n <= e ? 'on' : ''}" data-action="setExhaustion" data-fk="x${n}" data-n="${n}" aria-label="Exhaustion ${n}" aria-pressed="${n <= e}">${n}</button>`).join('');
   return `
     <div class="xmeter">
-      <button class="xseg s0 ${e === 0 ? 'on' : ''}" data-action="setExhaustion" data-n="0" aria-label="No exhaustion">0</button>${segs}
+      <button class="xseg s0 ${e === 0 ? 'on' : ''}" data-action="setExhaustion" data-fk="x0" data-n="0" aria-label="No exhaustion" aria-pressed="${e === 0}">0</button>${segs}
     </div>
     <p class="xlabel ${e >= 6 ? 'dead' : ''}">${calcSpan('exhaustion')}</p>`;
 }
@@ -599,7 +664,7 @@ function conditionButtons() {
   return CONDITIONS.map((name) => {
     const on = C().conditions.includes(name);
     const fx = CONDITION_EFFECTS[name] || '';
-    return `<button class="cond k-${condKey(name)} ${on ? 'on' : ''}" data-action="toggleCondition" data-key="${name}" aria-pressed="${on}" title="${esc(fx)}">
+    return `<button class="cond k-${condKey(name)} ${on ? 'on' : ''}" data-action="toggleCondition" data-fk="c-${condKey(name)}" data-key="${name}" aria-pressed="${on}">
       <span class="cond-head">${condIcon(name)}<span class="cn">${esc(name)}</span></span>${on ? `<small class="ce">${esc(fx)}</small>` : ''}
     </button>`;
   }).join('');
@@ -628,11 +693,27 @@ function equipmentAttacks() {
   }).join('');
 }
 
+function deathCard(urgent) {
+  const c = C();
+  return `
+  <section class="card death-card ${urgent ? 'urgent' : ''}">
+    <h2>Death saves</h2>
+    ${urgent ? '<p class="warn">You are at 0 HP. Roll a death save on your turn and mark each result here. Any healing resets the marks.</p>' : '<p class="hint">Used only at 0 HP. Healing resets the marks.</p>'}
+    <div class="row death">
+      <span>Successes</span>${pips('character.deathSaves.success', 3, c.deathSaves.success, 'success')}
+      <span>Failures</span>${pips('character.deathSaves.fail', 3, c.deathSaves.fail, 'failure')}
+    </div>
+  </section>`;
+}
+
+// Collapsed editors: opened state is remembered in openBlocks across re-renders.
+function block(key, title, inner) {
+  return `<details class="card block" data-block="${key}" ${openBlocks.has(key) ? 'open' : ''}><summary>${title}</summary>${inner}</details>`;
+}
+
 function tabCombat() {
   const c = C();
-  const hdLeft = Math.max(0, lvl() - num(c.hdUsed));
-  const slots = SLOTS[lvl() - 1].map((n, i) => `<div class="slot"><span class="slot-lvl">${i + 1}</span>${pips(`character.slotsUsed.${i}`, n, num(c.slotsUsed[i]), `level ${i + 1} slot`)}</div>`).join('');
-  const quickUses = Object.keys(USES).filter((k) => usesMax(k)).map((k) => `<li><span class="grow">${esc(USES[k].name)}</span>${pips(`character.uses.${k}`, usesMax(k), num(c.uses[k]), USES[k].name)}</li>`).join('');
+  const zero = num(c.hp.current) <= 0;
   const attacks = c.attacks.map((a) => `
     <div class="item">
       <div class="item-head">
@@ -656,73 +737,56 @@ function tabCombat() {
       <p class="muted dmg-line">Damage: ${calcSpan(`dmg:${a.id}`)}</p>
     </div>`).join('');
   const ai = acInfo();
-
-  return `
-  <div class="two-col">
-    <section class="card">
-      <h2>Hit points</h2>
-      <div class="grid three">
-        ${input('character.hp.current', { label: 'Current', type: 'number' })}
-        ${c.hp.auto ? `<div class="field"><span>Max (auto)</span><div class="static">${calcSpan('autoHP')}</div></div>` : input('character.hp.max', { label: 'Max', type: 'number', min: 1 })}
-        ${input('character.hp.temp', { label: 'Temporary', type: 'number', min: 0 })}
-      </div>
-      ${check('character.hp.auto', 'Calculate max HP (8 + CON at level 1, then 5 + CON per level)', { rerender: true })}
-      <div class="row hp-quick">
-        <input id="hpAmount" type="number" inputmode="numeric" min="0" placeholder="Amount" aria-label="Amount">
-        <button class="danger" data-action="hp" data-key="damage">Damage</button>
-        <button class="ok" data-action="hp" data-key="heal">Heal</button>
-        <button data-action="hp" data-key="temp">Set temp</button>
-      </div>
-      <h3>Death saves</h3>
-      <div class="row death">
-        <span>Successes</span>${pips('character.deathSaves.success', 3, c.deathSaves.success, 'success')}
-        <span>Failures</span>${pips('character.deathSaves.fail', 3, c.deathSaves.fail, 'failure')}
-      </div>
-      <h3>Hit dice</h3>
-      <ul class="list"><li><span class="grow">d8</span><span class="val">${hdLeft} / ${lvl()}</span>
-        <button class="small" data-action="spendHD" ${hdLeft ? '' : 'disabled'}>Spend</button></li></ul>
-    </section>
-    <section class="card">
-      <h2>Defense</h2>
-      <p class="ac-line"><span class="ac-big">AC ${calcSpan('ac')}</span> <small class="muted" data-calc="acText">${esc(calc('acText'))}</small></p>
-      ${ai.warns.map((w) => `<p class="warn">${esc(w)}</p>`).join('')}
-      ${check('character.acAuto', 'Auto AC from equipment', { rerender: true })}
-      ${c.acAuto ? '' : '<p class="hint">Turn on Auto AC to calculate it from your equipped armor and shield.</p>'}
-      <div class="grid">
-        ${c.acAuto ? input('character.acMisc', { label: 'Other AC bonus', type: 'number' }) : input('character.ac', { label: 'Armor Class', type: 'number' })}
-        ${input('character.speed', { label: 'Speed (ft)', type: 'number' })}
-        ${input('character.initBonus', { label: 'Init bonus', type: 'number' })}
-      </div>
-      <p class="hint">Initiative ${calcSpan('init')} (DEX + bonus; Alert feat: add your Proficiency Bonus).</p>
-    </section>
-  </div>
-  <section class="card">
-    <h2>Exhaustion & conditions</h2>
-    <h3>Exhaustion</h3>
-    ${exhaustionMeter()}
-    <h3>Conditions</h3>
-    <div class="conds">${conditionButtons()}</div>
-  </section>
-  ${cannonPanel()}
-  <div class="two-col">
-    <section class="card">
-      <h2>Spell slots</h2>
-      <p class="hint">Save DC ${spellDC()} · Spell attack ${fmt(spellAtk())}${lvl() >= 5 ? ' · Arcane Firearm: +1d8 to one damage roll' : ''}</p>
-      <div class="slots">${slots}</div>
-    </section>
-    <section class="card">
-      <h2>Limited uses</h2>
-      <ul class="list">${quickUses || '<li class="muted">None at this level.</li>'}</ul>
-    </section>
-  </div>
-  <section class="card">
-    <h2>Weapons & attacks</h2>
+  const defense = `
+    <div class="grid three">
+      ${input('character.hp.current', { label: 'Current HP', type: 'number' })}
+      ${c.hp.auto ? `<div class="field"><span>Max (auto)</span><div class="static">${calcSpan('autoHP')}</div></div>` : input('character.hp.max', { label: 'Max HP', type: 'number', min: 1 })}
+      ${input('character.hp.temp', { label: 'Temporary HP', type: 'number', min: 0 })}
+    </div>
+    ${check('character.hp.auto', 'Calculate max HP (8 + CON at level 1, then 5 + CON per level)', { rerender: true })}
+    <h3>Armor Class</h3>
+    <p class="ac-line"><span class="ac-big">AC ${calcSpan('ac')}</span> <small class="muted" data-calc="acText">${esc(calc('acText'))}</small></p>
+    ${ai.warns.map((w) => `<p class="warn">${esc(w)}</p>`).join('')}
+    ${check('character.acAuto', 'Auto AC from equipment', { rerender: true })}
+    ${c.acAuto ? '' : '<p class="hint">Turn on Auto AC to calculate it from your equipped armor and shield.</p>'}
+    <div class="grid">
+      ${c.acAuto ? input('character.acMisc', { label: 'Other AC bonus', type: 'number' }) : input('character.ac', { label: 'Armor Class', type: 'number' })}
+      ${input('character.speed', { label: 'Speed (ft)', type: 'number' })}
+      ${input('character.initBonus', { label: 'Init bonus', type: 'number' })}
+    </div>
+    <p class="hint">Initiative ${calcSpan('init')} (DEX + bonus; Alert feat: add your Proficiency Bonus).</p>`;
+  const atk = `
     <h3>From equipment</h3>
     ${equipmentAttacks()}
     <h3>Custom attacks</h3>
     ${attacks || '<p class="muted">No custom attacks yet.</p>'}
-    <button class="ghost" data-action="addAttack">+ Add attack</button>
-  </section>`;
+    <button class="ghost" data-action="addAttack">+ Add attack</button>`;
+
+  return `
+  ${zero ? deathCard(true) : ''}
+  ${glance()}
+  ${condRow()}
+  ${resourcesCard()}
+  ${rollReference()}
+  ${cannonPanel()}
+  ${zero ? '' : deathCard(false)}
+  ${block('defense', 'Edit defense', defense)}
+  ${block('attacks', 'Edit attacks', atk)}`;
+}
+
+// Fixed bar above the bottom navigation (Combat only): quick Damage, Heal and Rest.
+function dock() {
+  return `
+  <div class="dock" role="group" aria-label="Hit points">
+    <button class="dock-btn danger" data-action="sheet" data-kind="damage">Damage</button>
+    <div class="dock-hp">
+      <div class="dock-line"><b class="dock-num" data-calc="hpcur">${calc('hpcur')}</b><span class="dock-max">/ <span data-calc="hpmax">${calc('hpmax')}</span> HP</span></div>
+      <span class="dock-temp" data-calc="hptemp" data-show-if="hptemp" ${num(C().hp.temp) ? '' : 'hidden'}>${esc(calc('hptemp'))}</span>
+      <i class="bar" data-calc="hpPct" data-calc-attr="--pct" style="--pct:${calc('hpPct')}%"></i>
+    </div>
+    <button class="dock-btn ok" data-action="sheet" data-kind="heal">Heal</button>
+    <button class="dock-btn" data-action="sheet" data-kind="rest">Rest</button>
+  </div>`;
 }
 
 // ----- Spells
@@ -1227,6 +1291,11 @@ function tabData() {
     ${textarea('campaign.notes', { label: 'Campaign notes (party, house rules, schedule…)', rows: 6 })}
   </section>
   <section class="card">
+    <h2>Feedback</h2>
+    ${check('ui.haptics', 'Vibration on actions', { rerender: false })}
+    <p class="hint">A short buzz when you spend, heal, take damage or rest. Works on phones that support it (Android Chrome); desktop browsers ignore it.</p>
+  </section>
+  <section class="card">
     <h2>Your data</h2>
     <p>Everything is saved <b>only in this browser on this device</b>. Your phone and your PCs each have their own copy and <b>do not sync</b>.
       To move your character, export a backup on one device and import it on the other. Importing replaces the data on that device.</p>
@@ -1253,17 +1322,20 @@ function render() {
   applyTheme();
   const tab = RENDER[state.ui.tab] ? state.ui.tab : 'combat';
   const sec = sectionOf(tab);
+  const combat = sec.key === 'combat';
+  document.body.classList.toggle('has-dock', combat);
   const y = window.scrollY;
   const ae = document.activeElement;
   const focused = ae?.dataset?.bind || ae?.dataset?.filter;
   const navFocus = ae?.closest?.('.bnav, .seg') ? `${ae.closest('.bnav') ? '.bnav' : '.seg'} [data-key="${ae.dataset.key}"]` : '';
   view.innerHTML = `
-    ${header(sec.key !== 'combat')}
-    ${statusStrip(sec.key !== 'combat')}
+    ${header(!combat)}
+    ${combat ? '' : statusStrip(true)}
     ${sec.tabs ? subTabs(sec, tab) : ''}
     <main id="panel" ${sec.tabs ? `role="tabpanel" aria-labelledby="tab-${tab}"` : `aria-label="${sec.label}"`}>${RENDER[tab]()}</main>
     <footer class="muted"><span id="saveStatus">Saved</span> · Artificer (Forge of the Artificer) · D&D 2024 rules</footer>
     ${datalists()}
+    ${combat ? dock() : ''}
     ${bottomNav(sec)}`;
   applyBodyFx();
   window.scrollTo(0, y);
@@ -1293,9 +1365,160 @@ async function showPersistInfo() {
 }
 
 // ---------- actions ----------
-function rest(kind) {
-  const c = C();
+// ---------- undo, haptics, toasts ----------
+// In-memory undo stack: JSON snapshots of character + sessions + campaign (not ui), taken BEFORE a mutating action.
+const undoStack = []; // entries { id, raw }
+let snapSeq = 0;
+const snapRaw = () => JSON.stringify({ character: state.character, sessions: state.sessions, campaign: state.campaign });
+function clearUndo() {
+  undoStack.length = 0;
+  toastRoot.querySelectorAll('.toast-undo').forEach((b) => b.remove());
+}
+function snap() {
+  toastRoot.querySelectorAll('.toast-undo').forEach((b) => b.remove()); // an older toast must not undo a newer action
+  undoStack.push({ id: ++snapSeq, raw: snapRaw() });
+  if (undoStack.length > 20) undoStack.shift();
+}
+// True (and the snapshot is dropped) when the action since the last snap() changed nothing.
+function dropIfNoop() {
+  const top = undoStack[undoStack.length - 1];
+  if (top && top.raw === snapRaw()) { undoStack.pop(); return true; }
+  return false;
+}
+function undo(el) {
+  const top = undoStack[undoStack.length - 1];
+  if (!top) return toast('Nothing to undo');
+  if (el?.dataset?.id && Number(el.dataset.id) !== top.id) return; // only the toast's own action can be undone
+  undoStack.pop();
+  const d = JSON.parse(top.raw);
+  Object.assign(state, { character: d.character, sessions: d.sessions, campaign: d.campaign });
+  persist();
+  if (sh) { sh.dirty = true; renderSheet(); }
+  render();
+  toast('Undone');
+}
+// Vibration is independent of prefers-reduced-motion (that only affects visual effects).
+function buzz(pattern = 10) {
+  if (state.ui.haptics === false || !navigator.vibrate) return;
+  try { navigator.vibrate(pattern); } catch { /* unsupported */ }
+}
+// Snapshot, change state, save, then update the screen: 'full' re-renders, 'fast' only refreshes the calculated numbers.
+function mutate(fn, { msg = '', sub = '', vib = 10, mode = 'full', ms } = {}) {
+  snap();
+  fn();
+  if (dropIfNoop()) return;
+  persist();
+  if (mode === 'full') render(); else if (mode === 'fast') refreshDerived();
+  buzz(vib);
+  if (msg) toast(msg, { undo: true, sub, ms });
+}
+
+const toastRoot = document.createElement('div');
+toastRoot.id = 'toasts';
+toastRoot.setAttribute('role', 'status');
+toastRoot.setAttribute('aria-live', 'polite');
+toastRoot.setAttribute('aria-atomic', 'true');
+document.body.appendChild(toastRoot);
+let toastTimer;
+function toast(msg, { undo: withUndo = false, sub = '', ms } = {}) {
+  clearTimeout(toastTimer);
+  let undoId = 0;
+  if (withUndo) {
+    if (dropIfNoop()) return; // nothing changed: no snapshot, no toast
+    undoId = undoStack[undoStack.length - 1]?.id || 0;
+    withUndo = !!undoId;
+  }
+  const t = document.createElement('div');
+  t.className = 'toast';
+  t.innerHTML = `<span class="toast-msg"><b>${esc(msg)}</b> ${sub ? `<span>${esc(sub)}</span>` : ''}</span>${withUndo ? `<button class="toast-undo" data-action="undo" data-id="${undoId}">Undo</button>` : ''}`;
+  toastRoot.replaceChildren(t);
+  // The toast stays while it has focus or the pointer is over it.
+  const hide = () => {
+    if (t.contains(document.activeElement) || t.matches(':hover')) { toastTimer = setTimeout(hide, 1500); return; }
+    t.remove();
+  };
+  toastTimer = setTimeout(hide, ms ?? (withUndo ? 6000 : 2600));
+}
+function pulseHP(kind) {
+  document.querySelectorAll('.dock-num, .plate-hp b').forEach((el) => {
+    el.classList.remove('pulse-dmg', 'pulse-heal');
+    void el.offsetWidth;
+    el.classList.add(`pulse-${kind}`);
+  });
+}
+
+// ---------- bottom sheet ----------
+// One dialog at a time, rendered outside #view so a re-render of the page does not close it.
+// `sh` holds its kind and small working state (typed amount, d8 roll, rest tab...).
+const sheetRoot = document.createElement('div');
+sheetRoot.id = 'sheet-root';
+document.body.appendChild(sheetRoot);
+let sh = null;
+
+const openerSel = (el) => (el?.dataset?.action ? `[data-action="${el.dataset.action}"]${['kind', 'id', 'key'].filter((k) => el.dataset[k] !== undefined).map((k) => `[data-${k}="${el.dataset[k]}"]`).join('')}` : '');
+function openSheet(kind, opener, init = {}) {
+  if (sh) return;
+  sh = { kind, opener: openerSel(opener), amt: '', roll: 0, rolls: [], tab: 'short', clear: false, text: '', dirty: false, ...init };
+  view.inert = true;
+  document.body.classList.add('sheet-open');
+  sheetRoot.innerHTML = `
+    <div class="sheet-backdrop" data-action="closeSheet"></div>
+    <section class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title" tabindex="-1">
+      <header class="sheet-head"><h2 class="sheet-title" id="sheet-title"></h2><button class="sheet-close" data-action="closeSheet">Close</button></header>
+      <div class="sheet-body"></div>
+    </section>`;
+  renderSheet();
+  sheetRoot.querySelector('.sheet').focus({ preventScroll: true });
+}
+function closeSheet({ render: force = false } = {}) {
+  if (!sh) return;
+  const { opener, dirty } = sh;
+  sh = null;
+  sheetRoot.innerHTML = '';
+  view.inert = false;
+  document.body.classList.remove('sheet-open');
+  if (force || dirty) render();
+  (opener && view.querySelector(opener) || view.querySelector('.dock button'))?.focus({ preventScroll: true });
+}
+function renderSheet() {
+  if (!sh) return;
+  const { title, body } = SHEETS[sh.kind]();
+  const fk = document.activeElement?.closest?.('#sheet-root') ? document.activeElement.dataset.fk : '';
+  const scroll = sheetRoot.querySelector('.sheet-body');
+  const top = scroll.scrollTop;
+  sheetRoot.querySelector('#sheet-title').textContent = title;
+  scroll.innerHTML = body;
+  scroll.scrollTop = top;
+  if (fk) sheetRoot.querySelector(`[data-fk="${fk}"]`)?.focus({ preventScroll: true });
+}
+
+const d8Grid = (action, picked = 0) => `<div class="d8-grid" role="group" aria-label="d8 result">${[1, 2, 3, 4, 5, 6, 7, 8].map((n) =>
+  `<button class="key" data-action="${action}" data-n="${n}" data-fk="d${n}" aria-pressed="${picked === n}">${n}</button>`).join('')}</div>`;
+const KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'back', '0', 'clear'];
+const BACK_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9 5h11v14H9L3 12z"/><path d="M12.5 9.5l5 5M17.5 9.5l-5 5"/></svg>';
+function keypad() {
+  return `<div class="keypad" role="group" aria-label="Number pad">${KEYS.map((k) =>
+    `<button class="key" data-action="kp" data-k="${k}" data-fk="k${k}" ${k === 'back' ? 'aria-label="Backspace"' : ''}>${k === 'back' ? BACK_ICON : k === 'clear' ? 'Clear' : k}</button>`).join('')}</div>`;
+}
+const kpDisplay = () => `<div class="kp-display" aria-live="polite" aria-atomic="true"><span class="kp-amt">${esc(sh.amt || '0')}</span></div>`;
+const kpChips = () => `<div class="kp-chips" role="group" aria-label="Add to amount">${[1, 2, 5, 10].map((n) => `<button data-action="chip" data-n="${n}" data-fk="chip${n}">+${n}</button>`).join('')}</div>`;
+
+// What damage does to current and temporary HP (temp HP absorb first).
+function hpAfterDamage(amt) {
+  const hp = C().hp;
+  const fromTemp = Math.min(num(hp.temp), amt);
+  return { temp: num(hp.temp) - fromTemp, cur: Math.max(0, num(hp.current) - (amt - fromTemp)) };
+}
+const hpText = (cur, temp) => `${cur} HP${temp ? ` + ${temp} temp` : ''}`;
+
+// Resting: one function computes the result on a copy, the same function applies it for real.
+function applyRest(c, kind, { clearConds = false, rolls = [] } = {}) {
   if (kind === 'short') {
+    for (const r of rolls) {
+      c.hdUsed = num(c.hdUsed) + 1;
+      c.hp.current = Math.min(maxHP(), num(c.hp.current) + Math.max(0, r + am('con')));
+      if (c.hp.current > 0) c.deathSaves = { success: 0, fail: 0 };
+    }
     if (lvl() >= 20 && c.items.some((i) => i.attuned)) c.uses.flash = 0; // Magical Guidance
     else if (lvl() >= 14) c.uses.flash = Math.max(0, num(c.uses.flash) - 1); // Refreshed Genius
     return;
@@ -1308,28 +1531,184 @@ function rest(kind) {
   c.cannons = [];
   c.exhaustion = Math.max(0, num(c.exhaustion) - 1);
   c.deathSaves = { success: 0, fail: 0 };
+  if (clearConds) c.conditions = [];
+}
+function restSummary(kind, opts) {
+  const b = C();
+  const a = JSON.parse(JSON.stringify(b));
+  applyRest(a, kind, opts);
+  const lines = [];
+  if (num(b.hp.current) !== num(a.hp.current)) lines.push(`HP ${num(b.hp.current)} → ${num(a.hp.current)} (max ${maxHP()})`);
+  if (num(b.hp.temp) !== num(a.hp.temp)) lines.push(`Temp HP ${num(b.hp.temp)} removed`);
+  if (num(b.hdUsed) !== num(a.hdUsed)) lines.push(`Hit Dice ${lvl() - num(b.hdUsed)}/${lvl()} → ${lvl() - num(a.hdUsed)}/${lvl()}`);
+  const slotLines = SLOTS[lvl() - 1].map((n, i) => [i + 1, n - num(b.slotsUsed[i]), n - num(a.slotsUsed[i])]).filter(([, x, y]) => x !== y);
+  if (slotLines.length) lines.push(`Spell slots restored (${slotLines.map(([l, x, y]) => `L${l} ${x}→${y}`).join(', ')})`);
+  for (const k of Object.keys(USES)) {
+    const max = usesMax(k);
+    if (!max) continue;
+    const x = Math.max(0, max - num(b.uses[k]));
+    const y = Math.max(0, max - num(a.uses[k]));
+    if (x !== y) lines.push(`${USES[k].name} ${x}→${y}`);
+  }
+  if (b.cannons.length && !a.cannons.length) lines.push(`${b.cannons.length === 1 ? 'Cannon' : 'Cannons'} removed`);
+  if (num(b.exhaustion) !== num(a.exhaustion)) lines.push(`Exhaustion ${num(b.exhaustion)} → ${num(a.exhaustion)}`);
+  if ((num(b.deathSaves.success) || num(b.deathSaves.fail)) && !(num(a.deathSaves.success) || num(a.deathSaves.fail))) lines.push('Death saves reset');
+  if (b.conditions.length && !a.conditions.length) lines.push(`Conditions cleared (${b.conditions.join(', ')})`);
+  return lines;
 }
 
-function toast(msg) {
-  document.querySelectorAll('.toast').forEach((x) => x.remove());
-  const t = document.createElement('div');
-  t.className = 'toast'; t.textContent = msg;
-  document.body.appendChild(t);
-  setTimeout(() => t.remove(), 2600);
-}
+const kpKinds = ['damage', 'heal', 'cannonhp'];
+const incapacitating = (n) => n === 'Incapacitated' || /Incapacitated/.test(CONDITION_EFFECTS[n] || '');
+const concSpells = () => SPELLS.filter((s) => s.flags.includes('C') && spellStatus(s) !== 'none').sort((a, b) => a.level - b.level || a.name.localeCompare(b.name));
 
-function useSlot() {
+const SHEETS = {
+  damage() {
+    const amt = num(sh.amt);
+    const p = hpAfterDamage(amt);
+    return {
+      title: 'Damage',
+      body: `${kpDisplay()}
+        <p class="kp-preview">${amt ? `Now ${hpText(num(C().hp.current), num(C().hp.temp))} → ${hpText(p.cur, p.temp)}` : `Now ${hpText(num(C().hp.current), num(C().hp.temp))}. Temp HP are used up first.`}</p>
+        ${kpChips()}${keypad()}
+        <div class="sheet-actions"><button class="danger big" data-action="applyDmg" ${amt ? '' : 'disabled'}>Apply damage</button></div>`,
+    };
+  },
+  heal() {
+    const amt = num(sh.amt);
+    const cur = num(C().hp.current);
+    return {
+      title: 'Heal',
+      body: `${kpDisplay()}
+        <p class="kp-preview">${amt ? `HP ${cur} → ${Math.min(maxHP(), cur + amt)} (max ${maxHP()})` : `HP ${cur} / ${maxHP()}${num(C().hp.temp) ? `, ${num(C().hp.temp)} temp` : ''}`}</p>
+        ${kpChips()}${keypad()}
+        <div class="sheet-actions"><button class="ok big" data-action="applyHeal" ${amt ? '' : 'disabled'}>Heal</button>
+          <button class="big" data-action="setTemp" ${amt ? '' : 'disabled'}>Set temp HP</button></div>
+        <p class="hint">Temp HP do not stack: setting them replaces the old amount (currently ${num(C().hp.temp)}).</p>`,
+    };
+  },
+  cannonhp() {
+    const k = C().cannons.find((x) => x.id === sh.id);
+    const max = 5 * lvl();
+    const i = C().cannons.indexOf(k) + 1;
+    return {
+      title: `Cannon ${i} HP`,
+      body: `${kpDisplay()}
+        <p class="kp-preview">${k ? `Cannon HP ${num(k.hp)} / ${max}` : 'This cannon is gone.'}</p>
+        ${kpChips()}${keypad()}
+        <div class="sheet-actions"><button class="danger big" data-action="cannonAmt" data-dir="-1" ${num(sh.amt) && k ? '' : 'disabled'}>Damage cannon</button>
+          <button class="ok big" data-action="cannonAmt" data-dir="1" ${num(sh.amt) && k ? '' : 'disabled'}>Repair cannon</button></div>`,
+    };
+  },
+  hd() {
+    const con = am('con');
+    const roll = sh.roll;
+    const gained = Math.max(0, roll + con);
+    const cur = num(C().hp.current);
+    return {
+      title: 'Spend a Hit Die',
+      body: `<p>You have <b>${hdLeft()}</b> d8 left. Roll one and tap the number you got.</p>
+        ${d8Grid('hdPick', roll)}
+        <p class="kp-preview big">${roll ? `${roll} ${fmt(con)} CON = <b>${gained} HP healed</b> (HP ${cur} → ${Math.min(maxHP(), cur + gained)})` : `CON modifier ${fmt(con)} is added to the roll.`}</p>
+        <div class="sheet-actions"><button class="ok big" data-action="hdApply" ${roll && hdLeft() ? '' : 'disabled'}>Spend Hit Die</button></div>`,
+    };
+  },
+  rest() {
+    const long = sh.tab === 'long';
+    const opts = { clearConds: long && sh.clear, rolls: long ? [] : sh.rolls };
+    const lines = restSummary(sh.tab, opts);
+    const con = am('con');
+    const left = hdLeft() - sh.rolls.length;
+    const tabs = `<div class="seg-mini" role="group" aria-label="Rest type">
+      <button data-action="restTab" data-key="short" data-fk="t-short" aria-pressed="${!long}">Short rest</button>
+      <button data-action="restTab" data-key="long" data-fk="t-long" aria-pressed="${long}">Long rest</button></div>`;
+    const shortPart = `
+      <h3>Spend Hit Dice (${left} left)</h3>
+      <p class="hint">Roll a d8 for each Hit Die you spend and tap the result. ${fmt(con)} (CON) is added to each.</p>
+      ${d8Grid('restRoll')}
+      ${sh.rolls.length ? `<ul class="roll-list">${sh.rolls.map((r, i) => `<li><span>d8 ${r} ${fmt(con)} = <b>+${Math.max(0, r + con)} HP</b></span><button class="icon" data-action="restUnroll" data-i="${i}" aria-label="Remove roll ${i + 1}">✕</button></li>`).join('')}</ul>` : ''}`;
+    const longPart = `<label class="check"><input type="checkbox" data-sh="clear" data-fk="clear" ${sh.clear ? 'checked' : ''}><span>Also clear conditions (off by default: conditions end by their own source)</span></label>`;
+    return {
+      title: 'Rest',
+      body: `${tabs}${long ? longPart : shortPart}
+        <h3>What changes</h3>
+        <ul class="sum-list">${lines.map((l) => `<li>${esc(l)}</li>`).join('') || '<li class="muted">Nothing to restore.</li>'}</ul>
+        ${long ? '<p class="hint">Afterwards you can change prepared spells and create items from your plans.</p>' : ''}
+        <div class="sheet-actions"><button class="ok big" data-action="restConfirm">${long ? 'Take long rest' : 'Take short rest'}</button></div>`,
+    };
+  },
+  cond() {
+    return { title: 'Conditions', body: `<div class="conds">${conditionButtons()}</div><h3>Exhaustion</h3>${exhaustionMeter()}` };
+  },
+  conc() {
+    const cur = C().concentration || { id: '', name: '' };
+    const list = concSpells();
+    return {
+      title: 'Concentration',
+      body: `${cur.name ? `<p class="kp-preview big">Concentrating on <b>${esc(cur.name)}</b></p>` : '<p class="muted">Not concentrating.</p>'}
+        <h3>Prepared spells that need it</h3>
+        <ul class="pick-list">${list.map((s) => `<li><button data-action="concPick" data-id="${esc(s.id)}" data-fk="s-${esc(s.id)}" aria-pressed="${cur.id === s.id}"><span>${esc(s.name)}</span>${lvlTag(s.level)}</button></li>`).join('') || '<li class="muted">None of your prepared spells need Concentration. Use "Other effect".</li>'}</ul>
+        <h3>Other effect</h3>
+        <div class="row"><label class="field grow"><span>Name</span><input data-sh="text" data-fk="other" maxlength="40" value="${esc(sh.text)}" placeholder="Effect or item"></label><button data-action="concOther">Set</button></div>
+        <div class="sheet-actions"><button class="danger big" data-action="concEnd" ${cur.name ? '' : 'disabled'}>End concentration</button></div>
+        <p class="hint">Ends when you start another Concentration spell, become Incapacitated, or die.</p>`,
+    };
+  },
+  slot() {
+    const avail = SLOTS[lvl() - 1].map((n, i) => [i + 1, n - num(C().slotsUsed[i])]).filter(([, n]) => n > 0);
+    return {
+      title: 'Create with a spell slot',
+      body: `<p>Pick the slot to spend. A slot pays for one cannon.</p>
+        <ul class="pick-list">${avail.map(([l, n]) => `<li><button data-action="slotPick" data-level="${l}" data-fk="sl${l}"><span>Level ${l} slot</span><small>${n} left</small></button></li>`).join('') || '<li class="muted">No spell slots left.</li>'}</ul>`,
+    };
+  },
+  detonate() {
+    const st = cannonStats(lvl(), intMod());
+    return {
+      title: 'Detonate the cannon?',
+      body: `<p>Each creature within 20 ft makes a DEX save (DC ${spellDC()}) and takes ${esc(st.detonate || '')} damage, half on a success. The cannon is destroyed.</p>
+        <div class="sheet-actions"><button class="danger big" data-action="detonateGo">Detonate</button><button class="big" data-action="closeSheet">Cancel</button></div>`,
+    };
+  },
+};
+
+// A condition or exhaustion change happened (inside the conditions sheet): save, update the sheet and the screen effects.
+function condChanged(msg, sub = '') {
+  persist();
+  applyBodyFx();
+  if (sh) { sh.dirty = true; renderSheet(); } else render();
+  refreshDerived();
+  buzz(10);
+  toast(msg, { undo: true, sub });
+}
+function pipMessage(path, spent) {
+  const seg = path.split('.');
+  if (seg[1] === 'slotsUsed') return `Level ${Number(seg[2]) + 1} slot ${spent ? 'spent' : 'restored'}`;
+  if (seg[1] === 'uses') return `${USES[seg[2]]?.name || 'Use'} ${spent ? 'used' : 'restored'}`;
+  if (seg[1] === 'deathSaves') return `Death save ${seg[2] === 'fail' ? 'failure' : 'success'} ${spent ? 'marked' : 'cleared'}`;
+  return 'Updated';
+}
+// Update every pip of one group in place (faster than re-rendering the page).
+function syncPips(path) {
+  const used = num(getPath(path));
+  document.querySelectorAll('.pip').forEach((b) => {
+    if (b.dataset.path !== path) return;
+    const on = Number(b.dataset.i) < used;
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-pressed', String(on));
+  });
+}
+function makeCannons(mode, level = 0) {
   const c = C();
-  const avail = SLOTS[lvl() - 1].map((n, i) => n - num(c.slotsUsed[i]));
-  const lowest = avail.findIndex((n) => n > 0);
-  if (lowest < 0) { alert('No spell slots left.'); return false; }
-  const options = avail.map((n, i) => (n > 0 ? i + 1 : null)).filter(Boolean);
-  const ans = prompt(`Spend which spell slot level? Available: ${options.join(', ')}`, String(options[0]));
-  if (ans === null) return false;
-  const l = Number(ans);
-  if (!options.includes(l)) { alert('That slot level is not available.'); return false; }
-  c.slotsUsed[l - 1] = num(c.slotsUsed[l - 1]) + 1;
-  return true;
+  snap();
+  if (mode === 'free') c.uses.cannon = num(c.uses.cannon) + 1;
+  else c.slotsUsed[level - 1] = num(c.slotsUsed[level - 1]) + 1;
+  // Level 15+: one free creation makes two cannons at once (a slot-paid creation makes one).
+  const n = mode === 'free' && lvl() >= 15 && c.cannons.length === 0 ? 2 : 1;
+  for (let i = 0; i < n; i++) c.cannons.push({ id: uid(), hp: 5 * lvl() });
+  persist();
+  render();
+  buzz(10);
+  toast(n === 2 ? 'Two cannons created' : 'Cannon created', { undo: true });
 }
 
 const actions = {
@@ -1354,68 +1733,182 @@ const actions = {
   cycleSkill: (el) => { const k = el.dataset.key; C().skills[k] = (num(C().skills[k]) + 1) % 3; commit(); },
   setExhaustion: (el) => {
     const n = Number(el.dataset.n);
+    snap();
     C().exhaustion = n === num(C().exhaustion) && n > 0 ? n - 1 : n;
-    commit();
+    condChanged(`Exhaustion ${num(C().exhaustion)}`);
   },
   toggleCondition: (el) => {
     const c = C(); const k = el.dataset.key;
-    c.conditions = c.conditions.includes(k) ? c.conditions.filter((x) => x !== k) : [...c.conditions, k];
-    commit();
+    const on = c.conditions.includes(k);
+    snap();
+    c.conditions = on ? c.conditions.filter((x) => x !== k) : [...c.conditions, k];
+    let sub = '';
+    if (!on && c.concentration?.name && incapacitating(k)) { c.concentration = { id: '', name: '' }; sub = 'Concentration ended (Incapacitated)'; }
+    condChanged(`${k} ${on ? 'removed' : 'added'}`, sub);
   },
   pip: (el) => {
     const i = Number(el.dataset.i);
-    const used = num(getPath(el.dataset.path));
-    setPath(el.dataset.path, used > i ? i : i + 1);
-    commit();
+    const path = el.dataset.path;
+    const used = num(getPath(path));
+    const next = used > i ? i : i + 1;
+    mutate(() => setPath(path, next), { mode: 'none', msg: pipMessage(path, next > used) });
+    syncPips(path);
+    refreshDerived();
+    if (path === 'character.uses.cannon') render(); // the cannon card depends on the free use
   },
-  hp: (el) => {
-    const amtEl = document.getElementById('hpAmount');
-    const amt = Math.max(0, Math.floor(num(amtEl.value)));
-    if (!amt && el.dataset.key !== 'temp') return amtEl.focus();
+  sheet: (el) => openSheet(el.dataset.kind, el, { id: el.dataset.id }),
+  closeSheet: () => closeSheet(),
+  undo: (el) => undo(el),
+  kp: (el) => {
+    const k = el.dataset.k;
+    if (k === 'clear') sh.amt = '';
+    else if (k === 'back') sh.amt = sh.amt.slice(0, -1);
+    else if (sh.amt.length < 4) sh.amt = String(Number(sh.amt + k));
+    renderSheet();
+  },
+  chip: (el) => { sh.amt = String(Math.min(9999, num(sh.amt) + Number(el.dataset.n))); renderSheet(); },
+  applyDmg: () => {
+    const amt = Math.floor(num(sh.amt));
+    if (!amt) return;
     const hp = C().hp;
-    if (el.dataset.key === 'damage') {
-      const fromTemp = Math.min(num(hp.temp), amt);
-      hp.temp = num(hp.temp) - fromTemp;
-      hp.current = Math.max(0, num(hp.current) - (amt - fromTemp));
-    } else if (el.dataset.key === 'heal') {
-      hp.current = Math.min(maxHP(), num(hp.current) + amt);
-      if (hp.current > 0) C().deathSaves = { success: 0, fail: 0 };
-    } else hp.temp = amt; // temp HP don't stack
-    commit();
+    const wasUp = num(hp.current) > 0;
+    snap();
+    const after = hpAfterDamage(amt);
+    hp.temp = after.temp;
+    hp.current = after.cur;
+    persist();
+    const zero = after.cur <= 0;
+    closeSheet({ render: wasUp === zero });
+    refreshDerived();
+    pulseHP('dmg');
+    buzz(zero ? [80, 50, 80, 50, 160] : 30);
+    const conc = C().concentration?.name;
+    const sub = !conc ? '' : zero ? `0 HP: Concentration on ${conc} ends if you are Incapacitated or die.`
+      : `Concentration save: DC ${Math.min(30, Math.max(10, Math.floor(amt / 2)))} (CON save ${fmt(saveMod('con'))})`;
+    toast(`Took ${amt} damage: ${hpText(after.cur, after.temp)}`, { undo: true, sub, ms: sub ? 10000 : 6000 });
   },
-  spendHD: () => {
-    const conMod = am('con');
-    const answer = prompt(`Roll 1d8 and type the result (CON ${fmt(conMod)} is added).\nLeave empty to roll for you.`, '');
-    if (answer === null) return;
-    const roll = answer.trim() === '' ? 1 + Math.floor(Math.random() * 8) : Math.max(1, Math.min(8, Math.floor(num(answer))));
-    const gained = Math.max(0, roll + conMod);
+  applyHeal: () => {
+    const amt = Math.floor(num(sh.amt));
+    if (!amt) return;
+    const hp = C().hp;
+    const wasZero = num(hp.current) <= 0;
+    snap();
+    const before = num(hp.current);
+    hp.current = Math.max(before, Math.min(maxHP(), before + amt)); // healing never lowers HP
+    if (hp.current > 0) C().deathSaves = { success: 0, fail: 0 };
+    persist();
+    closeSheet({ render: wasZero && hp.current > 0 });
+    refreshDerived();
+    pulseHP('heal');
+    buzz(10);
+    toast(`Healed ${hp.current - before}: ${hpText(hp.current, num(hp.temp))}`, { undo: true });
+  },
+  setTemp: () => {
+    const amt = Math.floor(num(sh.amt));
+    if (!amt) return;
+    snap();
+    C().hp.temp = amt; // temp HP don't stack: the new amount replaces the old one
+    persist();
+    closeSheet();
+    refreshDerived();
+    pulseHP('heal');
+    buzz(10);
+    toast(`Temp HP set to ${amt}`, { undo: true });
+  },
+  hdPick: (el) => { sh.roll = Number(el.dataset.n); renderSheet(); },
+  hdApply: () => {
+    const roll = sh.roll;
+    if (!roll || !hdLeft()) return;
+    const gained = Math.max(0, roll + am('con'));
+    snap();
     C().hdUsed = num(C().hdUsed) + 1;
     C().hp.current = Math.min(maxHP(), num(C().hp.current) + gained);
-    commit();
-    toast(`Rolled ${roll} ${fmt(conMod)} → +${gained} HP`);
+    if (C().hp.current > 0) C().deathSaves = { success: 0, fail: 0 };
+    persist();
+    closeSheet({ render: true });
+    pulseHP('heal');
+    buzz(10);
+    toast(`Hit Die: ${roll} ${fmt(am('con'))} = +${gained} HP`, { undo: true });
   },
-  shortRest: () => {
-    const extra = lvl() >= 20 ? ' Magical Guidance restores all Flash of Genius uses if you are attuned to an item.' : lvl() >= 14 ? ' Refreshed Genius restores one Flash of Genius use.' : '';
-    if (!confirm(`Short rest. Spend Hit Dice on the Combat tab.${extra}`)) return;
-    rest('short'); setTab('combat'); commit(); toast('Short rest done');
+  restTab: (el) => { sh.tab = el.dataset.key; renderSheet(); },
+  restRoll: (el) => { if (sh.rolls.length < hdLeft()) { sh.rolls.push(Number(el.dataset.n)); renderSheet(); } },
+  restUnroll: (el) => { sh.rolls.splice(Number(el.dataset.i), 1); renderSheet(); },
+  restConfirm: () => {
+    const kind = sh.tab;
+    snap();
+    applyRest(C(), kind, { clearConds: kind === 'long' && sh.clear, rolls: kind === 'long' ? [] : sh.rolls });
+    persist();
+    closeSheet({ render: true });
+    buzz(10);
+    toast(`${kind === 'long' ? 'Long' : 'Short'} rest done`, { undo: true });
   },
-  longRest: () => {
-    if (!confirm('Long rest: full HP, all Hit Dice and spell slots, all feature uses, cannons removed, Exhaustion −1. Then you can change prepared spells and create items from your plans.')) return;
-    rest('long'); commit(); toast('Long rest done');
+  concPick: (el) => {
+    const s = SPELLS.find((x) => x.id === el.dataset.id);
+    if (!s) return;
+    const prev = C().concentration?.name;
+    snap();
+    C().concentration = { id: s.id, name: s.name };
+    persist();
+    closeSheet({ render: true });
+    buzz(10);
+    toast(`Concentrating on ${s.name}`, { undo: true, sub: prev && prev !== s.name ? `${prev} ended` : '' });
+  },
+  concOther: () => {
+    const name = sh.text.trim();
+    if (!name) return;
+    snap();
+    C().concentration = { id: '', name };
+    persist();
+    closeSheet({ render: true });
+    buzz(10);
+    toast(`Concentrating on ${name}`, { undo: true });
+  },
+  concEnd: () => {
+    if (!C().concentration?.name) return;
+    snap();
+    C().concentration = { id: '', name: '' };
+    persist();
+    closeSheet({ render: true });
+    buzz(10);
+    toast('Concentration ended', { undo: true });
   },
   createCannon: (el) => {
-    const c = C();
-    if (el.dataset.key === 'free') c.uses.cannon = num(c.uses.cannon) + 1;
-    else if (!useSlot()) return;
-    // Level 15+: one free creation makes two cannons at once (a slot-paid creation makes one).
-    const n = el.dataset.key === 'free' && lvl() >= 15 && c.cannons.length === 0 ? 2 : 1;
-    for (let i = 0; i < n; i++) c.cannons.push({ id: uid(), hp: 5 * lvl() });
-    commit();
+    if (el.dataset.key === 'slot') return openSheet('slot', el);
+    if (usesMax('cannon') - num(C().uses.cannon) <= 0) return toast('No free creation left');
+    makeCannons('free');
   },
-  dismissCannon: (el) => { C().cannons = C().cannons.filter((k) => k.id !== el.dataset.id); commit(); },
-  detonate: (el) => {
-    if (!confirm(`Detonate: each creature within 20 ft makes a DEX save (DC ${spellDC()}), 3d10 Force damage, half on success. The cannon is destroyed.`)) return;
-    actions.dismissCannon(el);
+  slotPick: (el) => {
+    const l = Number(el.dataset.level);
+    if (SLOTS[lvl() - 1][l - 1] - num(C().slotsUsed[l - 1]) <= 0) return;
+    makeCannons('slot', l);
+    closeSheet({ render: true });
+  },
+  cannonStep: (el) => {
+    const n = Number(el.dataset.n);
+    const k = C().cannons.find((x) => x.id === el.dataset.id);
+    if (!k) return;
+    mutate(() => { k.hp = Math.max(0, Math.min(5 * lvl(), num(k.hp) + n)); }, { mode: 'fast', msg: `Cannon HP ${Math.max(0, Math.min(5 * lvl(), num(k.hp) + n))} / ${5 * lvl()}` });
+  },
+  cannonAmt: (el) => {
+    const k = C().cannons.find((x) => x.id === sh.id);
+    const amt = Math.floor(num(sh.amt)) * Number(el.dataset.dir);
+    if (!k || !amt) return;
+    snap();
+    k.hp = Math.max(0, Math.min(5 * lvl(), num(k.hp) + amt));
+    persist();
+    closeSheet({ render: true });
+    buzz(10);
+    toast(`Cannon HP ${k.hp} / ${5 * lvl()}`, { undo: true });
+  },
+  dismissCannon: (el) => mutate(() => { C().cannons = C().cannons.filter((k) => k.id !== el.dataset.id); }, { msg: 'Cannon dismissed' }),
+  detonateGo: () => {
+    const id = sh.id;
+    snap();
+    C().cannons = C().cannons.filter((k) => k.id !== id);
+    persist();
+    closeSheet({ render: true });
+    buzz(30);
+    toast('Cannon detonated', { undo: true });
   },
   addAttack: () => {
     C().attacks.push({ id: uid(), name: '', ability: 'dex', proficient: true, bonus: 0, dmgBonus: 0, addMod: true, mastery: '', notes: '', firearm: false, damages: [{ id: uid(), dice: '1d8', type: 'Piercing' }] });
@@ -1432,8 +1925,7 @@ const actions = {
   },
   removeAttack: (el) => {
     const a = C().attacks.find((x) => x.id === el.dataset.id);
-    if (a?.name && !confirm(`Delete "${a.name}"?`)) return;
-    C().attacks = C().attacks.filter((x) => x.id !== el.dataset.id); commit();
+    mutate(() => { C().attacks = C().attacks.filter((x) => x.id !== el.dataset.id); }, { msg: `Deleted ${a?.name ? `"${a.name}"` : 'attack'}` });
   },
   toggleSpell: (el) => {
     const s = SPELLS.find((x) => x.id === el.dataset.id);
@@ -1450,13 +1942,13 @@ const actions = {
   togglePlan: (el) => {
     const c = C();
     const custom = c.plans.custom.find((p) => p.id === el.dataset.id);
+    let removed = '';
     if (custom) {
-      if (!confirm(`Remove the plan "${custom.name}"? Items made from it vanish.`)) return;
+      snap(); removed = custom.name;
       c.plans.custom = c.plans.custom.filter((p) => p.id !== custom.id);
       c.items = c.items.filter((i) => i.planId !== custom.id || i.origin !== 'replicated');
     } else if (c.plans.known[el.dataset.id]) {
-      const made = c.items.filter((i) => i.planId === el.dataset.id && i.origin === 'replicated');
-      if (made.length && !confirm('Items made from this plan vanish when you replace it. Continue?')) return;
+      snap(); removed = allPlans().find((p) => p.id === el.dataset.id)?.name || 'Plan';
       delete c.plans.known[el.dataset.id];
       c.items = c.items.filter((i) => !(i.planId === el.dataset.id && i.origin === 'replicated'));
     } else {
@@ -1464,7 +1956,8 @@ const actions = {
       if (knownPlans().length >= max && !confirm(`You already know ${knownPlans().length} of ${max} plans. Learn anyway?`)) return;
       c.plans.known[el.dataset.id] = true;
     }
-    commit();
+    persist(); render();
+    if (removed) { buzz(10); toast(`Plan removed: ${removed}`, { undo: true, sub: 'Items made from it vanished.' }); }
   },
   learnGeneric: (el) => {
     const base = PLANS.find((p) => p.id === el.dataset.id);
@@ -1503,8 +1996,7 @@ const actions = {
   },
   removeItem: (el) => {
     const it = C().items.find((x) => x.id === el.dataset.id);
-    if (it?.name && !confirm(`Delete "${it.name}"?`)) return;
-    C().items = C().items.filter((x) => x.id !== el.dataset.id); commit();
+    mutate(() => { C().items = C().items.filter((x) => x.id !== el.dataset.id); }, { msg: `Deleted ${it?.name ? `"${it.name}"` : 'item'}` });
   },
   takeFeat: (el) => {
     const ft = featById(el.dataset.id);
@@ -1513,8 +2005,7 @@ const actions = {
     commit();
   },
   dropFeat: (el) => {
-    if (!confirm('Remove this feat?')) return;
-    C().feats = C().feats.filter((x) => x.id !== el.dataset.id); commit();
+    mutate(() => { C().feats = C().feats.filter((x) => x.id !== el.dataset.id); }, { msg: 'Feat removed' });
   },
   addSession: () => {
     const next = state.sessions.reduce((m, s) => Math.max(m, num(s.number)), 0) + 1;
@@ -1523,8 +2014,8 @@ const actions = {
     commit();
   },
   removeSession: (el) => {
-    if (!confirm('Delete this session and its notes?')) return;
-    state.sessions = state.sessions.filter((s) => s.id !== el.dataset.id); commit();
+    const ses = state.sessions.find((x) => x.id === el.dataset.id);
+    mutate(() => { state.sessions = state.sessions.filter((x) => x.id !== el.dataset.id); }, { msg: `Session ${ses?.number ?? ''} deleted`.replace('  ', ' ') });
   },
   export: () => downloadFile(backupFile(state)),
   share: async () => {
@@ -1534,14 +2025,38 @@ const actions = {
   reset: () => {
     if (!confirm('Delete your character, campaign and all sessions from this device? Export a backup first if unsure.')) return;
     if (!confirm('Really delete everything? This cannot be undone.')) return;
-    state = defaultState(); commit();
+    state = defaultState(); clearUndo(); commit();
   },
 };
 
 // ---------- events ----------
-view.addEventListener('click', (e) => {
+// One delegated click handler for the page, the sheet and the toasts.
+document.addEventListener('click', (e) => {
   const el = e.target.closest('[data-action]');
   if (el && actions[el.dataset.action] && !el.disabled) { e.preventDefault(); actions[el.dataset.action](el); }
+});
+// Sheet: text field, checkbox, Esc to close, Tab kept inside, digits on a hardware keyboard.
+sheetRoot.addEventListener('input', (e) => { if (e.target.dataset.sh === 'text') sh.text = e.target.value; });
+sheetRoot.addEventListener('change', (e) => {
+  if (e.target.dataset.sh === 'clear') { sh.clear = e.target.checked; renderSheet(); }
+});
+document.addEventListener('keydown', (e) => {
+  if (!sh) return;
+  if (e.key === 'Escape') { e.preventDefault(); closeSheet(); return; }
+  if (e.key === 'Tab') {
+    const f = [...sheetRoot.querySelectorAll('button:not(:disabled), input, [tabindex="0"]')].filter((x) => x.offsetParent !== null);
+    if (!f.length) return;
+    const first = f[0]; const last = f[f.length - 1];
+    if (!sheetRoot.contains(document.activeElement)) { e.preventDefault(); first.focus(); }
+    else if (e.shiftKey && (document.activeElement === first || document.activeElement.classList.contains('sheet'))) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    return;
+  }
+  if (e.key === 'Enter' && e.target.dataset?.sh === 'text' && sh.kind === 'conc') { e.preventDefault(); actions.concOther(); return; }
+  if (kpKinds.includes(sh.kind) && e.target.tagName !== 'INPUT' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    if (/^\d$/.test(e.key)) actions.kp({ dataset: { k: e.key } });
+    else if (e.key === 'Backspace') actions.kp({ dataset: { k: 'back' } });
+  }
 });
 function readValue(el) {
   if (el.dataset.type === 'bool') return el.checked;
@@ -1568,6 +2083,7 @@ view.addEventListener('input', (e) => {
     return;
   }
   if (!el.dataset.bind) return;
+  if (undoStack.length) clearUndo(); // typed edits must never be reverted by Undo
   const before = maxHP();
   const wasFull = num(C().hp.current) >= before;
   setPath(el.dataset.bind, readValue(el));
@@ -1584,6 +2100,7 @@ view.addEventListener('change', (e) => {
 });
 view.addEventListener('toggle', (e) => {
   if (e.target.dataset?.fmore) { if (e.target.open) openFilters.add(e.target.dataset.fmore); else openFilters.delete(e.target.dataset.fmore); return; }
+  if (e.target.dataset?.block) { if (e.target.open) openBlocks.add(e.target.dataset.block); else openBlocks.delete(e.target.dataset.block); return; }
   const sp = e.target.dataset?.spell;
   if (sp) { if (e.target.open) openSpells.add(sp); else openSpells.delete(sp); return; }
   const id = e.target.dataset?.session;
@@ -1616,6 +2133,7 @@ async function importFile(file) {
     if (!data || typeof data !== 'object' || !data.character) throw new Error('This is not a backup from this app.');
     if (!confirm('Replace everything on this device with the imported backup?')) return;
     state = normalize(data);
+    clearUndo();
     commit();
     toast('Backup imported');
   } catch (err) {
@@ -1625,7 +2143,7 @@ async function importFile(file) {
 
 window.addEventListener('storage', (e) => {
   if (e.key !== KEY || !e.newValue) return;
-  try { const { tab, sub } = state.ui; state = normalize(JSON.parse(e.newValue)); Object.assign(state.ui, { tab, sub }); render(); } catch { /* ignore */ }
+  try { const { tab, sub } = state.ui; state = normalize(JSON.parse(e.newValue)); Object.assign(state.ui, { tab, sub }); clearUndo(); render(); } catch { /* ignore */ }
 });
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') save(state); });
 window.addEventListener('pagehide', () => save(state));
