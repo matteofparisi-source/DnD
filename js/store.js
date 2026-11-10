@@ -62,7 +62,7 @@ export function defaultState() {
     },
     campaign: { name: '', dm: '', setting: 'Eberron', startDate: '', notes: '' },
     sessions: [],
-    ui: { tab: 'combat', theme: 'dark', sub: { workshop: 'equipment', character: 'stats' }, f: {}, haptics: true }, // theme: dark | light | auto; sub = last sub-tab per section; haptics = vibrate on actions
+    ui: { tab: 'combat', theme: 'dark', sub: { workshop: 'equipment', character: 'stats' }, f: {}, haptics: true, trackWeight: true }, // theme: dark | light | auto; sub = last sub-tab per section; haptics = vibrate on actions; trackWeight = weight fields and the carried counter
   };
 }
 

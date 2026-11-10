@@ -72,3 +72,6 @@ export const XP_THRESHOLDS = [
 export const mod = (score) => Math.floor((Number(score || 0) - 10) / 2);
 export const profBonus = (level) => 2 + Math.floor((Math.max(1, Math.min(20, level)) - 1) / 4);
 export const fmt = (n) => (n >= 0 ? `+${n}` : `${n}`);
+
+// SRD 5.2.1 Coin Values (Equipment chapter): value of one coin in gold pieces.
+export const COIN_VALUES = { cp: 1 / 100, sp: 1 / 10, ep: 1 / 2, gp: 1, pp: 10 };

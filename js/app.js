@@ -1,10 +1,9 @@
-import { ABILITIES, SKILLS, ALIGNMENTS, CONDITIONS, CONDITION_EFFECTS, DAMAGE_TYPES, WEAPON_MASTERIES, mod, profBonus, fmt } from './rules.js';
+import { ABILITIES, SKILLS, ALIGNMENTS, CONDITIONS, CONDITION_EFFECTS, DAMAGE_TYPES, WEAPON_MASTERIES, COIN_VALUES, mod, profBonus, fmt } from './rules.js';
 import {
   PLANS_KNOWN, MAGIC_ITEMS, CANTRIPS, PREPARED, SLOTS, attunementLimit, maxSpellLevel, at, SKILL_CHOICES,
   PROFICIENCIES, ARTILLERIST_PROFICIENCIES, FEATURES, USES, ARTILLERIST_SPELLS, cannonStats, SPECIES_SUGGESTIONS,
 } from './data/artificer.js';
 import { SPELLS, SOURCE_LABEL, SCHOOLS } from './data/spells.js';
-import { SPELL_DETAILS } from './data/spell-details.js';
 import { PLANS, PLAN_TYPES, TIERS } from './data/plans.js';
 import { FEATS, FEAT_CATEGORIES, FEAT_SOURCES } from './data/feats.js';
 import { WEAPONS, ARMOR } from './data/equipment.js';
@@ -18,6 +17,18 @@ const openFilters = new Set();
 const openBlocks = new Set(); // open state of the collapsed editors on Combat
 let journalQuery = '';
 let addMenuOpen = false;
+
+// Spell details (about 100 KB) are loaded on demand the first time the Spells page renders.
+let DETAILS = null;
+let detailsState = 'idle'; // idle | loading | failed
+function ensureDetails() {
+  if (DETAILS || detailsState === 'loading') return;
+  detailsState = 'loading';
+  import('./data/spell-details.js')
+    .then((m) => { DETAILS = m.SPELL_DETAILS; detailsState = 'idle'; })
+    .catch(() => { detailsState = 'failed'; })
+    .then(() => { if (state.ui.tab === 'spells') renderList(); });
+}
 
 // ---------- helpers ----------
 const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -224,6 +235,7 @@ function calc(key) {
     case 'acText': return acInfo().text;
     case 'iatk': { const i = c.items.find((x) => x.id === arg); return i ? fmt(weaponStats(i).hit) : ''; }
     case 'idmg': { const i = c.items.find((x) => x.id === arg); return i ? weaponStats(i).dmg : ''; }
+    case 'iname': { const i = c.items.find((x) => x.id === arg); return i?.name || 'Unnamed item'; }
     case 'itemfx': { const i = c.items.find((x) => x.id === arg); return i ? itemEffect(i) : ''; }
     case 'dc': return String(spellDC());
     case 'satk': return fmt(spellAtk());
@@ -296,8 +308,8 @@ const datalists = () => `
 const abilityOptions = [['', '—'], ...ABILITIES.map((a) => [a.key, a.short])];
 
 // Filter controls. Values live in state.ui.f[page][key].
-function chips(page, key, options, { multi = false } = {}) {
-  const cur = F(page)[key];
+function chips(page, key, options, { multi = false, def = '' } = {}) {
+  const cur = F(page)[key] || def; // def: the chip that counts as on while nothing is chosen
   return `<div class="chips">${options.map(([val, text]) => {
     const on = multi ? (cur || []).includes(val) : String(cur ?? '') === String(val);
     return `<button class="chip-btn ${on ? 'on' : ''}" data-action="filter" data-page="${page}" data-key="${key}" data-val="${esc(val)}" ${multi ? 'data-multi' : ''} aria-pressed="${on}">${esc(text)}</button>`;
@@ -481,13 +493,16 @@ function tabStats() {
       <button class="prof p${l}" data-action="cycleSkill" data-key="${s.key}" title="${label} (tap to change)" aria-label="${s.name}: ${label}"></button>
       <span class="grow">${s.name} <small class="muted">${s.ability.toUpperCase()}</small> ${cls}</span>${calcSpan(`skill:${s.key}`, 'val')}</li>`;
   }).join('');
-  const feats = FEATURES.map((f) => {
-    const has = lvl() >= f.lvl;
-    const u = f.uses && has && usesMax(f.uses) ? `<div class="row">${pips(`character.uses.${f.uses}`, usesMax(f.uses), num(c.uses[f.uses]), f.name)}<small class="muted">${USES[f.uses].name}</small></div>` : '';
-    return `<div class="feature ${has ? '' : 'locked'}">
-      <div class="row tight"><span class="lvl">L${f.lvl}</span><b class="grow">${esc(f.name)}</b>${has ? '' : '<small class="muted">not yet</small>'}</div>
-      <p>${esc(f.text)}</p>${u}</div>`;
-  }).join('');
+  const haveF = FEATURES.filter((f) => lvl() >= f.lvl);
+  const nextF = FEATURES.filter((f) => lvl() < f.lvl);
+  const featRow = (f) => {
+    const key = `ft${FEATURES.indexOf(f)}`;
+    const u = f.uses && usesMax(f.uses) ? `<div class="row tight feat-uses">${pips(`character.uses.${f.uses}`, usesMax(f.uses), num(c.uses[f.uses]), f.name)}<small class="muted">${esc(USES[f.uses].name)}</small></div>` : '';
+    return `<div class="feature">
+      <details data-block="${key}" ${openBlocks.has(key) ? 'open' : ''}><summary><span class="lvl">L${f.lvl}</span><b class="grow">${esc(f.name)}</b></summary><p>${esc(f.text)}</p></details>${u}</div>`;
+  };
+  const feats = haveF.map(featRow).join('');
+  const upcoming = nextF.length ? `<details class="upcoming" data-block="upcoming" ${openBlocks.has('upcoming') ? 'open' : ''}><summary>Upcoming features (${nextF.length})</summary>${nextF.map((f) => `<div class="up"><div class="row tight"><span class="lvl">L${f.lvl}</span><b>${esc(f.name)}</b></div><p>${esc(f.text)}</p></div>`).join('')}</details>` : '';
 
   return `
   <section class="card">
@@ -512,7 +527,7 @@ function tabStats() {
   <div class="two-col">
     <section class="card">
       <h2>Saving throws</h2>
-      <ul class="list">${saves}</ul>
+      <ul class="list big-val">${saves}</ul>
       ${input('character.saveBonus', { label: 'Bonus to all saves (e.g. Cloak of Protection)', type: 'number', cls: 'wide' })}
       <h2>Senses</h2>
       <ul class="list"><li><span class="grow">Passive Perception</span>${calcSpan('passive', 'val')}</li></ul>
@@ -526,16 +541,16 @@ function tabStats() {
     </section>
     <section class="card">
       <h2>Skills</h2>
-      <p class="hint">Tap the circle: empty = none, half = proficient, full = expertise.
-        <span class="flag prepared mini">A</span> = Artificer choices: pick 2 (${chosen} picked).</p>
-      <ul class="list">${skills}</ul>
+      <p class="hint">Circle: empty = none, half = proficient, full = expertise. <span class="flag prepared mini">A</span> = Artificer choices: pick 2 (${chosen} picked).</p>
+      <ul class="list big-val skills">${skills}</ul>
     </section>
   </div>
 
   <section class="card">
     <h2>Class features</h2>
-    <p class="hint">Features you have are highlighted; tap circles to mark uses. Rests reset them.</p>
+    <p class="hint">Tap a feature to read it; tap circles to mark uses (the same uses as on Combat). Rests reset them.</p>
     <div class="features">${feats}</div>
+    ${upcoming}
   </section>`;
 }
 
@@ -790,9 +805,25 @@ function dock() {
 }
 
 // ----- Spells
-function spellDesc(s) {
-  const d = SPELL_DETAILS[s.id];
-  if (!d) return '';
+// Casting-time tags come from the spell details (time string), not from stored data.
+const CAST_FILTERS = [['', 'Any'], ['action', 'Action'], ['bonus', 'Bonus'], ['reaction', 'Reaction'], ['ritual', 'Ritual'], ['longer', 'Longer']];
+const det = (id) => DETAILS?.[id];
+function castInfo(s) {
+  const t = String(det(s.id)?.time || '').toLowerCase();
+  const lead = t.split(/,| or /)[0].trim(); // "Action or Ritual" -> "action"; "Reaction, which you take..." -> "reaction"
+  return {
+    action: /^(1 )?action\b/.test(lead),
+    bonus: /\bbonus action\b/.test(lead),
+    reaction: /\breaction\b/.test(lead),
+    longer: /\b(minute|hour)s?\b/.test(lead),
+    ritual: /\britual\b/.test(t) || s.flags.includes('R'),
+  };
+}
+// Body of a spell card: built only when its <details> is opened.
+function spellBody(s) {
+  const d = det(s.id);
+  const note = spellStatus(s) !== 'none' ? `<input class="note" data-bind="character.spellNotes.${esc(s.id)}" value="${esc(C().spellNotes[s.id] || '')}" placeholder="Your notes (range, damage, reminders)" aria-label="Your notes for ${esc(s.name)}">` : '';
+  if (!d) return `<p class="muted">${detailsState === 'failed' ? "Spell details couldn't load (offline?)." : 'No details for this spell.'}</p>${note}`;
   const row = (l, v) => `<div class="sd-row"><dt>${l}</dt><dd>${esc(v)}</dd></div>`;
   const paras = (t) => String(t || '').split(/\n\n+/).filter(Boolean).map((p) => `<p>${esc(p)}</p>`).join('');
   const long = (l, t) => `<div class="sd-long"><dt>${l}</dt><dd>${paras(t)}</dd></div>`;
@@ -803,62 +834,81 @@ function spellDesc(s) {
     : /\(user's copy\)/.test(d.source)
     ? `<span class="tag-s ok">Checked against your book</span> <span class="muted">${esc(d.source)}</span>`
     : `<span class="tag-s warn">Community source · unverified</span> ${url ? `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(url.replace(/^https?:\/\//, ''))}</a>` : `<span class="muted">${esc(d.source)}</span>`}`;
-  return `<details class="spell-desc" data-spell="${esc(s.id)}" ${openSpells.has(s.id) ? 'open' : ''}>
-    <summary>Spell details</summary>
-    <dl class="sd-list">${row('Casting Time', d.time)}${row('Range', d.range)}${row('Components', d.components)}${row('Duration', d.duration)}${long('Description', d.desc)}${higher ? long('At Higher Levels', higher) : ''}</dl>
+  return `<dl class="sd-list">${row('Casting Time', d.time)}${row('Range', d.range)}${row('Components', d.components)}${row('Duration', d.duration)}${long('Description', d.desc)}${higher ? long('At Higher Levels', higher) : ''}</dl>
     <p class="sd-src">${src}</p>
-    ${d.note ? `<p class="sd-note">${esc(d.note)}</p>` : ''}
-  </details>`;
+    ${d.note ? `<p class="sd-note">${esc(d.note)}</p>` : ''}${note}`;
+}
+function spellCard(s) {
+  const st = spellStatus(s);
+  const ok = castable(s);
+  const open = openSpells.has(s.id);
+  const ci = castInfo(s);
+  const btn = st === 'always'
+    ? '<button class="small sp-act" disabled>Always</button>'
+    : `<button class="small sp-act ${st === 'none' ? '' : 'ok'}" data-action="toggleSpell" data-id="${esc(s.id)}" aria-label="${st === 'none' ? (s.level ? 'Prepare' : 'Learn') : (s.level ? 'Unprepare' : 'Forget')} ${esc(s.name)}" ${ok ? '' : 'disabled'}>${st === 'none' ? (s.level ? 'Prepare' : 'Learn') : (s.level ? 'Unprepare' : 'Forget')}</button>`;
+  return `<div class="item spell ${st !== 'none' ? 'sel' : ''} ${ok ? '' : 'locked'}">
+    <details class="spell-card" data-spell="${esc(s.id)}" data-lazy="spell:${esc(s.id)}" ${open ? 'open' : ''}>
+      <summary>
+        <span class="sp-line">${lvlTag(s.level)}<b class="grow">${esc(s.name)}</b></span>
+        <span class="row tight tags-row">
+          ${statusTag(st)}
+          ${ci.action ? '<span class="tag-s cast">Action</span>' : ''}${ci.bonus ? '<span class="tag-s cast">Bonus Action</span>' : ''}${ci.reaction ? '<span class="tag-s cast">Reaction</span>' : ''}${ci.longer ? '<span class="tag-s cast">Longer</span>' : ''}
+          ${s.flags.includes('C') ? '<span class="tag-s c">Concentration</span>' : ''}
+          ${ci.ritual ? '<span class="tag-s r">Ritual</span>' : ''}
+          <span class="tag-s">${esc(s.school)}</span>
+          <span class="tag-s src">${esc(s.book || SOURCE_LABEL[s.source])}</span>
+          ${ok ? '' : `<span class="tag-s">needs level ${s.level} slots</span>`}
+        </span>
+      </summary>
+      ${open ? `<div class="lazy-body">${spellBody(s)}</div>` : ''}
+    </details>
+    ${btn}
+  </div>`;
 }
 function spellsList() {
+  if (!DETAILS && detailsState !== 'failed') return '<p class="muted" role="status">Loading spell details…</p>';
   const f = F('spells');
+  const mine = f.view !== 'all';
   const q = (f.q || '').trim().toLowerCase();
   // When searching, spells whose name matches come before description-only matches.
   const nameHit = (s) => (q && s.name.toLowerCase().includes(q) ? 1 : 0);
   const list = SPELLS.filter((s) => {
     const st = spellStatus(s);
     const chosen = st !== 'none'; // a spell you already selected stays visible whatever the toggles say
-    if (s.source === 'legacy' && !f.legacy && !chosen) return false;
-    if (s.source === 'extra' && !f.extra && !chosen) return false;
-    if (s.source === 'artillerist' && st !== 'always' && !f.showLocked) return false;
-    if (f.level !== undefined && f.level !== '' && String(s.level) !== String(f.level)) return false;
-    if (f.status === 'selected' && !['always', 'prepared', 'known'].includes(st)) return false;
-    if (f.status === 'prepared' && !['prepared', 'known'].includes(st)) return false;
-    if (f.status === 'always' && st !== 'always') return false;
-    if (f.status === 'none' && st !== 'none') return false;
-    if (f.school && s.school !== f.school) return false;
-    if (f.conc && !s.flags.includes('C')) return false;
-    if (f.ritual && !s.flags.includes('R')) return false;
-    if (!f.showLocked && !castable(s) && !chosen) return false;
-    return matchQ('spells', s.name, s.school, SOURCE_LABEL[s.source], s.book, SPELL_DETAILS[s.id]?.desc, C().spellNotes[s.id]);
+    if (f.cast && !castInfo(s)[f.cast]) return false;
+    if (mine) {
+      if (!chosen) return false;
+    } else {
+      if (s.source === 'legacy' && !f.legacy && !chosen) return false;
+      if (s.source === 'extra' && !f.extra && !chosen) return false;
+      if (s.source === 'artillerist' && st !== 'always' && !f.showLocked) return false;
+      if (f.level !== undefined && f.level !== '' && String(s.level) !== String(f.level)) return false;
+      if (f.status === 'selected' && !['always', 'prepared', 'known'].includes(st)) return false;
+      if (f.status === 'prepared' && !['prepared', 'known'].includes(st)) return false;
+      if (f.status === 'always' && st !== 'always') return false;
+      if (f.status === 'none' && st !== 'none') return false;
+      if (f.school && s.school !== f.school) return false;
+      if (f.conc && !s.flags.includes('C')) return false;
+      if (!f.showLocked && !castable(s) && !chosen) return false;
+    }
+    return matchQ('spells', s.name, s.school, SOURCE_LABEL[s.source], s.book, det(s.id)?.desc, C().spellNotes[s.id]);
   }).sort((a, b) => nameHit(b) - nameHit(a) || a.level - b.level || a.name.localeCompare(b.name));
-  if (!list.length) return '<p class="muted">No spell matches these filters.</p>';
-  return list.map((s) => {
-    const st = spellStatus(s);
-    const ok = castable(s);
-    const btn = st === 'always'
-      ? '<button class="small" disabled>Always</button>'
-      : `<button class="small ${st === 'none' ? '' : 'ok'}" data-action="toggleSpell" data-id="${esc(s.id)}" ${ok ? '' : 'disabled'}>${st === 'none' ? (s.level ? 'Prepare' : 'Learn') : (s.level ? 'Unprepare' : 'Forget')}</button>`;
-    return `<div class="item spell ${st !== 'none' ? 'sel' : ''} ${ok ? '' : 'locked'}">
-      <div class="row tight">
-        ${lvlTag(s.level)}
-        <b class="grow">${esc(s.name)}</b>
-        ${btn}
-      </div>
-      <div class="row tight tags-row">
-        ${statusTag(st === 'known' ? 'known' : st)}
-        <span class="tag-s">${esc(s.school)}</span>
-        ${s.flags.includes('C') ? '<span class="tag-s c">Concentration</span>' : ''}
-        ${s.flags.includes('R') ? '<span class="tag-s r">Ritual</span>' : ''}
-        <span class="tag-s src">${esc(s.book || SOURCE_LABEL[s.source])}</span>
-        ${ok ? '' : `<span class="tag-s">needs level ${s.level} slots</span>`}
-      </div>
-      ${spellDesc(s)}
-      ${st !== 'none' ? `<input class="note" data-bind="character.spellNotes.${s.id}" value="${esc(C().spellNotes[s.id] || '')}" placeholder="Your notes (range, damage, reminders)" aria-label="Your notes for ${esc(s.name)}">` : ''}
-    </div>`;
+  const fail = detailsState === 'failed' ? '<p class="warn">Spell details could not be loaded (offline before the first visit?). Names and prepare buttons still work; reopen this page to retry.</p>' : '';
+  if (!list.length) {
+    return fail + (mine && !Object.keys(C().spells).length && !f.cast && !q
+      ? '<p class="muted">No spells selected yet. Open "All spells" to learn cantrips and prepare spells.</p>'
+      : '<p class="muted">No spell matches these filters.</p>');
+  }
+  if (!mine) return fail + list.map(spellCard).join('');
+  return fail + [0, 1, 2, 3, 4, 5].map((l) => {
+    const arr = list.filter((s) => s.level === l);
+    return arr.length ? `<h3 class="grp">${l === 0 ? 'Cantrips' : `Level ${l}`} <span class="muted">(${arr.length})</span></h3>${arr.map(spellCard).join('')}` : '';
   }).join('');
 }
 function tabSpells() {
+  ensureDetails();
+  const f = F('spells');
+  const mine = f.view !== 'all';
   const maxL = maxSpellLevel(lvl());
   return `
   <section class="card">
@@ -869,67 +919,74 @@ function tabSpells() {
       <span class="counter">Highest slot: <b>${maxL}</b></span>
       <span class="counter">DC <b>${spellDC()}</b> · Atk <b>${fmt(spellAtk())}</b></span>
     </div>
-    <p class="hint">Always-prepared spells (Artillerist and Mending) don't count against your prepared total. You can change prepared spells after a Long Rest.</p>
+    <div class="vseg" role="group" aria-label="Spell list">
+      <button data-action="spellView" data-key="mine" aria-pressed="${mine}">My spells</button>
+      <button data-action="spellView" data-key="all" aria-pressed="${!mine}">All spells</button>
+    </div>
     <div class="filters">
       ${fsearch('spells', 'Search spells…')}
+      ${chips('spells', 'cast', CAST_FILTERS)}
+      ${mine ? '' : `
       ${chips('spells', 'level', [['', 'All levels'], [0, 'Cantrip'], ...Array.from({ length: 5 }, (_, i) => [i + 1, `Lv ${i + 1}`])])}
       ${chips('spells', 'status', [['', 'Any status'], ['selected', '★ Selected'], ['prepared', 'Prepared'], ['always', 'Always'], ['none', 'Not prepared']])}
-      ${fmore('spells', ['school', 'conc', 'ritual', 'showLocked', 'legacy', 'extra'], `
+      ${fmore('spells', ['school', 'conc', 'showLocked', 'legacy', 'extra'], `
       <div class="row">
         ${fselect('spells', 'school', [['', 'Any school'], ...SCHOOLS.map((s) => [s, s])], 'School')}
         ${fcheck('spells', 'conc', 'Concentration')}
-        ${fcheck('spells', 'ritual', 'Ritual')}
         ${fcheck('spells', 'showLocked', 'Show spells above my level')}
         ${fcheck('spells', 'legacy', "Include Tasha's/Xanathar's legacy spells")}
         ${fcheck('spells', 'extra', 'Include other official books (Arcana Unleashed, D&D Beyond Drops)')}
       </div>
-      `)}
+      `)}`}
     </div>
     <div id="list">${spellsList()}</div>
-    <p class="hint">The list follows the 2025 Forge of the Artificer Artificer, taken from a community transcription. "Legacy" spells were on the 2020 Tasha's Artificer list but aren't on the 2025 list: use them only if your DM agrees. Spells from "other official books" are on the list but come from books outside the ones you play with. Spells you have selected always stay visible.</p>
+    <p class="hint">Always-prepared spells (Artillerist and Mending) don't count against your prepared total. You can change prepared spells after a Long Rest. Tap a spell's name for its details.</p>
+    ${mine ? '' : '<p class="hint">The list follows the 2025 Forge of the Artificer Artificer, taken from a community transcription. "Legacy" spells were on the 2020 Tasha\'s Artificer list but aren\'t on the 2025 list: use them only if your DM agrees. Spells from "other official books" are on the list but come from books outside the ones you play with. Spells you have selected always stay visible.</p>'}
   </section>`;
 }
 
 // ----- Plans
+function planCard(p) {
+  const known = planKnown(p);
+  const avail = p.tier <= lvl();
+  const made = C().items.filter((i) => i.planId === p.id).length;
+  let actions;
+  if (p.generic) actions = `<button class="small" data-action="learnGeneric" data-id="${esc(p.id)}" ${avail ? '' : 'disabled'}>+ Learn an item</button>`;
+  else actions = `
+    ${known ? `<button class="small ok" data-action="craft" data-id="${esc(p.id)}">Create</button>` : ''}
+    <button class="small ${known ? '' : 'ok'}" data-action="togglePlan" data-id="${esc(p.id)}" ${avail || known ? '' : 'disabled'}>${known ? (p.custom ? 'Remove' : 'Forget') : 'Learn'}</button>`;
+  return `<div class="item ${known && !p.generic ? 'sel' : ''} ${avail ? '' : 'locked'}">
+    <div class="row tight">
+      <span class="lvl">L${p.tier}+</span>
+      <b class="grow">${esc(p.name)}</b>
+      ${actions}
+    </div>
+    <div class="row tight tags-row">
+      ${p.generic ? '<span class="flag none">Any item of this kind: learn several</span>' : (known ? '<span class="flag prepared">Known</span>' : '<span class="flag none">Not known</span>')}
+      <span class="tag-s">${esc(p.type)}</span>
+      ${p.attune === true ? '<span class="tag-s c">Attunement</span>' : p.attune === false ? '<span class="tag-s">No attunement</span>' : '<span class="tag-s">Attunement varies</span>'}
+      ${p.custom ? `<span class="tag-s src">${esc(p.base)}</span>` : ''}
+      ${made ? `<span class="tag-s r">${made} made</span>` : ''}
+    </div>
+  </div>`;
+}
 function plansList() {
   const f = F('plans');
+  const view = f.view || 'now'; // now = known first, then what I can learn now | known | all
   const list = allPlans().filter((p) => {
-    const known = planKnown(p);
-    if (p.generic && f.status === 'known') return false;
     if (f.tier && String(p.tier) !== String(f.tier)) return false;
     if (f.type && p.type !== f.type) return false;
     if (f.attune === 'yes' && p.attune !== true) return false;
     if (f.attune === 'no' && p.attune !== false) return false;
-    if (f.status === 'known' && !known) return false;
-    if (f.status === 'unknown' && (known || p.custom)) return false;
-    if (f.available && p.tier > lvl()) return false;
     return matchQ('plans', p.name, p.type, p.base);
-  }).sort((a, b) => a.tier - b.tier || (a.generic - b.generic) || a.name.localeCompare(b.name));
-  if (!list.length) return '<p class="muted">No plan matches these filters.</p>';
-  return list.map((p) => {
-    const known = planKnown(p);
-    const avail = p.tier <= lvl();
-    const made = C().items.filter((i) => i.planId === p.id).length;
-    let actions;
-    if (p.generic) actions = `<button class="small" data-action="learnGeneric" data-id="${esc(p.id)}" ${avail ? '' : 'disabled'}>+ Learn an item</button>`;
-    else actions = `
-      ${known ? `<button class="small ok" data-action="craft" data-id="${esc(p.id)}">Create</button>` : ''}
-      <button class="small ${known ? '' : 'ok'}" data-action="togglePlan" data-id="${esc(p.id)}" ${avail || known ? '' : 'disabled'}>${known ? (p.custom ? 'Remove' : 'Forget') : 'Learn'}</button>`;
-    return `<div class="item ${known && !p.generic ? 'sel' : ''} ${avail ? '' : 'locked'}">
-      <div class="row tight">
-        <span class="lvl">L${p.tier}+</span>
-        <b class="grow">${esc(p.name)}</b>
-        ${actions}
-      </div>
-      <div class="row tight tags-row">
-        ${p.generic ? '<span class="flag none">Any item of this kind: learn several</span>' : (known ? '<span class="flag prepared">Known</span>' : '<span class="flag none">Not known</span>')}
-        <span class="tag-s">${esc(p.type)}</span>
-        ${p.attune === true ? '<span class="tag-s c">Attunement</span>' : p.attune === false ? '<span class="tag-s">No attunement</span>' : '<span class="tag-s">Attunement varies</span>'}
-        ${p.custom ? `<span class="tag-s src">${esc(p.base)}</span>` : ''}
-        ${made ? `<span class="tag-s r">${made} made</span>` : ''}
-      </div>
-    </div>`;
-  }).join('');
+  }).sort((a, b) => a.tier - b.tier || (!!a.generic - !!b.generic) || a.name.localeCompare(b.name));
+  if (view === 'all') return list.length ? list.map(planCard).join('') : '<p class="muted">No plan matches these filters.</p>';
+  const known = list.filter((p) => planKnown(p) && !p.generic);
+  const section = (title, arr, empty) => `<h3 class="grp">${title} <span class="muted">(${arr.length})</span></h3>${arr.length ? arr.map(planCard).join('') : `<p class="muted">${empty}</p>`}`;
+  const knownSec = section('Known plans', known, C().plans.custom.length || Object.keys(C().plans.known).length ? 'No known plan matches these filters.' : 'You have not learned any plans yet.');
+  if (view === 'known') return knownSec;
+  const now = list.filter((p) => !planKnown(p) && p.tier <= lvl());
+  return knownSec + section('Learnable now', now, 'No other plan is available at your level with these filters.');
 }
 function tabPlans() {
   if (lvl() < 2) return '<section class="card"><h2>Plans</h2><p class="muted">Replicate Magic Item unlocks at Artificer level 2. Change your level on the Stats tab.</p></section>';
@@ -943,12 +1000,11 @@ function tabPlans() {
     <p class="hint">At the end of a Long Rest, with Tinker's Tools, create one or two items from different known plans. If you go over your Magic Items total, the oldest one vanishes. Each time you gain a level you can swap one plan.</p>
     <div class="filters">
       ${fsearch('plans', 'Search plans…')}
+      ${chips('plans', 'view', [['now', 'Known + learnable'], ['known', '★ Known'], ['all', 'All']], { def: 'now' })}
       ${chips('plans', 'tier', [['', 'All tiers'], ...TIERS.map((t) => [t, `Level ${t}+`])])}
-      ${chips('plans', 'status', [['', 'All'], ['known', '★ Known'], ['unknown', 'Not known']])}
       <div class="row">
         ${fselect('plans', 'type', [['', 'Any type'], ...PLAN_TYPES.map((t) => [t, t])], 'Type')}
         ${fselect('plans', 'attune', [['', 'Any'], ['yes', 'Requires attunement'], ['no', 'No attunement']], 'Attunement')}
-        ${fcheck('plans', 'available', 'Only plans I can learn now')}
       </div>
     </div>
     <div id="list">${plansList()}</div>
@@ -997,37 +1053,87 @@ function armorFields(i, p) {
     </div>`;
 }
 
-function equipCard(i) {
+const ORIGINS = [['replicated', 'Replicated (plan)'], ['found', 'Found / loot'], ['bought', 'Bought'], ['reward', 'Reward / gift']];
+const RARITIES = ['Mundane', 'Common', 'Uncommon', 'Rare', 'Very Rare', 'Legendary', 'Artifact'];
+const trackWeight = () => state.ui.trackWeight !== false;
+
+// Read-only slot pips; slots past the limit show in the "bad" color.
+function attuneBar() {
+  const lim = attunementLimit(lvl());
+  const n = attunedCount();
+  const dots = Array.from({ length: Math.max(lim, n) }, (_, i) => `<i class="apip ${i < n ? 'on' : ''} ${i >= lim ? 'over' : ''}"></i>`).join('');
+  return `<div class="attune-bar">${counter(n, lim, 'Attuned')}<span class="apips" role="img" aria-label="${n} of ${lim} attunement slots used${n > lim ? ' (over the limit)' : ''}">${dots}</span></div>`;
+}
+
+const qtyStep = (i) => `<span class="qty" role="group" aria-label="Quantity of ${esc(i.name || 'item')}">
+  <button class="icon" data-action="qty" data-id="${esc(i.id)}" data-d="-1" aria-label="Decrease quantity of ${esc(i.name || 'item')}">−</button>
+  <b class="qty-n">${num(i.qty)}</b>
+  <button class="icon" data-action="qty" data-id="${esc(i.id)}" data-d="1" aria-label="Increase quantity of ${esc(i.name || 'item')}">+</button></span>`;
+
+const needsAttuneCheck = (i) => `<label class="check"><input type="checkbox" data-action="toggleNeeds" data-id="${esc(i.id)}" ${i.needsAttune ? 'checked' : ''}><span>Requires attunement</span></label>`;
+// Everything editable about an item; built only when the card's Edit block is opened.
+function itemEdit(i, kind) {
   ensureItemData(i);
   const p = `character.items.#${i.id}`;
-  const fx = itemEffect(i);
-  return `<div class="item ${i.equipped ? 'sel' : ''}">
-    <div class="item-head">
-      ${input(`${p}.name`, { placeholder: 'Item name' })}
-      <button class="icon danger" data-action="removeItem" data-id="${esc(i.id)}" title="Delete" aria-label="Delete item">✕</button>
-    </div>
-    <div class="row tight tags-row">
-      ${i.type === 'Armor' && i.armor.str ? `<span class="tag-s">STR ${esc(i.armor.str)}</span>` : ''}
-      ${i.type === 'Armor' && i.armor.stealth ? '<span class="tag-s c">Stealth disadv.</span>' : ''}
-      ${fx ? `<span class="badge fx" data-calc="itemfx:${esc(i.id)}">${esc(fx)}</span>` : ''}
-      ${i.attuned ? '<span class="flag always">Attuned</span>' : ''}
-      ${i.needsAttune && !i.attuned ? '<span class="flag none">Needs attunement</span>' : ''}
-      ${i.rarity === 'Mundane' ? '' : `<span class="tag-s src">${esc(i.rarity)}</span>`}
-    </div>
+  const del = `<button class="danger small" data-action="removeItem" data-id="${esc(i.id)}">Delete item</button>`;
+  if (kind === 'magic') {
+    return `
+    ${input(`${p}.name`, { label: 'Name', cls: 'wide' })}
     <div class="row">
-      ${input(`${p}.qty`, { label: 'Qty', type: 'number', min: 0, cls: 'xs' })}
-      ${input(`${p}.weight`, { label: 'Weight (lb each)', type: 'number', min: 0, cls: 'xs' })}
+      ${select(`${p}.origin`, ORIGINS, { label: 'Origin', cls: 'sm', rerender: true })}
+      ${select(`${p}.type`, ITEM_TYPES, { label: 'Type', cls: 'sm', rerender: true })}
+      ${select(`${p}.rarity`, RARITIES.filter((r) => r !== 'Mundane'), { label: 'Rarity', cls: 'sm', rerender: true })}
+      ${input(`${p}.qty`, { label: 'Qty', type: 'number', min: 0, cls: 'xs', rerender: true })}
+      ${input(`${p}.charges`, { label: 'Charges', type: 'number', min: 0, cls: 'xs' })}
+      ${input(`${p}.chargesMax`, { label: 'Max', type: 'number', min: 0, cls: 'xs' })}
+    </div>
+    <div class="row">${needsAttuneCheck(i)}</div>
+    ${textarea(`${p}.notes`, { rows: 2, placeholder: 'What it does, command words, where you found it…' })}
+    <div class="row">${del}</div>`;
+  }
+  return `
+    ${input(`${p}.name`, { label: 'Name', cls: 'wide' })}
+    <div class="row">
       ${select(`${p}.type`, ITEM_TYPES, { label: 'Type', cls: 'sm', rerender: true })}
       ${select(`${p}.rarity`, RARITIES, { label: 'Rarity', cls: 'sm', rerender: true })}
+      ${trackWeight() ? input(`${p}.weight`, { label: 'Weight (lb each)', type: 'number', min: 0, cls: 'xs' }) : ''}
     </div>
     ${i.type === 'Weapon' ? weaponFields(i, p) : i.type === 'Armor' ? armorFields(i, p) : i.type === 'Shield' ? `<div class="subbox"><div class="row">${input(`${p}.shield.bonus`, { label: 'Magic bonus (+N; base +2 AC is automatic)', type: 'number', cls: 'sm' })}</div></div>` : ''}
     <div class="row">
-      ${check(`${p}.equipped`, i.type === 'Weapon' ? 'Equipped (wielded / carried ready)' : 'Equipped', { rerender: true })}
-      ${check(`${p}.needsAttune`, 'Requires attunement', { rerender: true })}
-      ${i.needsAttune ? check(`${p}.attuned`, 'Attuned', { rerender: true }) : ''}
+      ${needsAttuneCheck(i)}
       ${input(`${p}.acBonus`, { label: 'AC bonus while equipped', type: 'number', cls: 'xs' })}
     </div>
     ${textarea(`${p}.notes`, { rows: 2, placeholder: 'Notes, command words, where you found it…' })}
+    <div class="row">${del}</div>`;
+}
+
+// Collapsed item card shared by Equipment & bag ('equip') and Magic items ('magic').
+function itemCard(i, kind) {
+  ensureItemData(i);
+  const fx = itemEffect(i);
+  const open = openBlocks.has(`e-${i.id}`);
+  const charges = num(i.chargesMax) ? `<span class="tag-s r">Charges ${num(i.charges)}/${num(i.chargesMax)}</span>` : '';
+  return `<div class="item icard ${i.equipped || i.attuned ? 'sel' : ''}">
+    <div class="icard-top">
+      <b class="icard-name" data-calc="iname:${esc(i.id)}">${esc(i.name || 'Unnamed item')}</b>
+      ${kind === 'equip' ? qtyStep(i) : num(i.qty) > 1 ? `<span class="muted">×${num(i.qty)}</span>` : ''}
+    </div>
+    <div class="row tight tags-row">
+      ${fx ? `<span class="badge fx" data-calc="itemfx:${esc(i.id)}">${esc(fx)}</span>` : ''}
+      ${i.type === 'Armor' && i.armor.str ? `<span class="tag-s">STR ${esc(i.armor.str)}</span>` : ''}
+      ${i.type === 'Armor' && i.armor.stealth ? '<span class="tag-s c">Stealth disadv.</span>' : ''}
+      ${i.rarity === 'Mundane' ? '' : `<span class="tag-s src">${esc(i.rarity)}</span>`}
+      ${kind === 'magic' ? `<span class="tag-s src">${esc(ORIGINS.find((o) => o[0] === i.origin)?.[1] || i.origin)}</span>` : ''}
+      ${charges}
+    </div>
+    <div class="icard-tog">
+      <button class="tog" data-action="toggleEquip" data-id="${esc(i.id)}" aria-pressed="${!!i.equipped}">Equipped</button>
+      ${i.needsAttune || i.attuned ? `<button class="tog" data-action="toggleAttune" data-id="${esc(i.id)}" aria-pressed="${!!i.attuned}">Attuned</button>` : ''}
+    </div>
+    <details class="edit" data-block="e-${esc(i.id)}" data-lazy="${kind}:${esc(i.id)}" ${open ? 'open' : ''}>
+      <summary>Edit</summary>
+      ${open ? `<div class="lazy-body">${itemEdit(i, kind)}</div>` : ''}
+    </details>
   </div>`;
 }
 
@@ -1041,8 +1147,23 @@ function equipmentList() {
     return matchQ('equipment', i.name, i.notes, i.type, i.rarity, i.weapon?.base, i.armor?.base);
   });
   if (!list.length) return `<p class="muted">${C().items.length ? 'No item matches these filters.' : 'Nothing here yet. Use "Add item" below.'}</p>`;
-  const group = (title, arr) => (arr.length ? `<h3 class="grp">${title} <span class="muted">(${arr.length})</span></h3>${arr.map(equipCard).join('')}` : '');
+  const group = (title, arr) => (arr.length ? `<h3 class="grp">${title} <span class="muted">(${arr.length})</span></h3>${arr.map((i) => itemCard(i, 'equip')).join('')}` : '');
   return group('Equipped', list.filter((i) => i.equipped)) + group('Bag', list.filter((i) => !i.equipped));
+}
+
+const fmtGp = (n) => String(Math.round(n * 100) / 100);
+function coinsCard() {
+  const c = C().coins;
+  const total = Object.entries(COIN_VALUES).reduce((s, [k, v]) => s + num(c[k]) * v, 0);
+  return `
+  <section class="card">
+    <h2>Coins & other gear</h2>
+    <div class="coins" role="group" aria-label="Coins">${['cp', 'sp', 'ep', 'gp', 'pp'].map((k) =>
+      `<button class="coin" data-action="sheet" data-kind="coin" data-key="${k}" aria-label="${k.toUpperCase()}: ${num(c[k])}. Add or spend"><small>${k.toUpperCase()}</small><b>${num(c[k])}</b></button>`).join('')}</div>
+    <p class="coin-total">Total: <b>${fmtGp(total)} gp</b></p>
+    <p class="hint">Tap a coin to add or spend. Total uses the SRD coin values (100 cp = 10 sp = 2 ep = 1 gp; 1 pp = 10 gp).</p>
+    ${textarea('character.gear', { label: 'Other notes about gear', rows: 5 })}
+  </section>`;
 }
 
 function tabEquipment() {
@@ -1053,11 +1174,12 @@ function tabEquipment() {
   <section class="card">
     <h2>Equipment & bag</h2>
     <div class="row">
-      <span class="counter ${w > cap ? 'over' : ''}">Carried: <b>${Math.round(w * 10) / 10} / ${cap} lb</b></span>
+      ${trackWeight() ? `<span class="counter ${w > cap ? 'over' : ''}">Carried: <b>${Math.round(w * 10) / 10} / ${cap} lb</b></span>` : ''}
       <span class="counter">Equipped: <b>${eq}</b></span>
-      ${counter(attunedCount(), attunementLimit(lvl()), 'Attuned')}
+      ${check('ui.trackWeight', 'Track weight', { rerender: true })}
     </div>
-    <p class="hint">Weight counts quantity × weight plus coins (50 per lb). Capacity is STR × 15.</p>
+    ${attuneBar()}
+    ${trackWeight() ? '<p class="hint">Weight counts quantity × weight plus coins (50 per lb). Capacity is STR × 15.</p>' : ''}
     <div class="filters">
       ${fsearch('equipment', 'Search equipment…')}
       ${chips('equipment', 'status', [['', 'All'], ['equipped', '★ Equipped'], ['bag', 'In bag']])}
@@ -1075,16 +1197,10 @@ function tabEquipment() {
       <button data-action="addEquip" data-kind="Other">+ Other item</button>
     </div>` : ''}
   </section>
-  <section class="card">
-    <h2>Coins & other gear</h2>
-    <div class="row">${['cp', 'sp', 'ep', 'gp', 'pp'].map((k) => input(`character.coins.${k}`, { label: k.toUpperCase(), type: 'number', min: 0, cls: 'xs' })).join('')}</div>
-    ${textarea('character.gear', { label: 'Other notes about gear', rows: 5 })}
-  </section>`;
+  ${coinsCard()}`;
 }
 
 // ----- Magic items
-const ORIGINS = [['replicated', 'Replicated (plan)'], ['found', 'Found / loot'], ['bought', 'Bought'], ['reward', 'Reward / gift']];
-const RARITIES = ['Mundane', 'Common', 'Uncommon', 'Rare', 'Very Rare', 'Legendary', 'Artifact'];
 function itemsList() {
   const f = F('items');
   const list = C().items.filter((i) => {
@@ -1098,43 +1214,14 @@ function itemsList() {
     return matchQ('items', i.name, i.notes, i.type, i.rarity);
   });
   if (!list.length) return `<p class="muted">${C().items.some((i) => i.rarity !== 'Mundane') ? 'No item matches these filters.' : 'No magic items yet. Create one from the Plans tab or add a found item.'}</p>`;
-  return list.map((i) => {
-    const p = `character.items.#${i.id}`;
-    return `<div class="item ${i.attuned || i.equipped ? 'sel' : ''}">
-      <div class="item-head">
-        ${input(`${p}.name`, { placeholder: 'Item name' })}
-        <button class="icon danger" data-action="removeItem" data-id="${esc(i.id)}" title="Delete" aria-label="Delete item">✕</button>
-      </div>
-      <div class="row tight tags-row">
-        ${i.attuned ? '<span class="flag always">Attuned</span>' : ''}
-        ${i.equipped ? '<span class="flag prepared">Equipped</span>' : ''}
-        ${i.needsAttune && !i.attuned ? '<span class="flag none">Needs attunement</span>' : ''}
-        <span class="tag-s src">${esc(ORIGINS.find((o) => o[0] === i.origin)?.[1] || i.origin)}</span>
-      </div>
-      <div class="row">
-        ${select(`${p}.origin`, ORIGINS, { label: 'Origin', cls: 'sm', rerender: true })}
-        ${select(`${p}.type`, ITEM_TYPES, { label: 'Type', cls: 'sm', rerender: true })}
-        ${select(`${p}.rarity`, RARITIES.filter((r) => r !== 'Mundane'), { label: 'Rarity', cls: 'sm', rerender: true })}
-        ${input(`${p}.charges`, { label: 'Charges', type: 'number', min: 0, cls: 'xs' })}
-        ${input(`${p}.chargesMax`, { label: 'Max', type: 'number', min: 0, cls: 'xs' })}
-      </div>
-      <div class="row">
-        ${check(`${p}.needsAttune`, 'Requires attunement', { rerender: true })}
-        ${i.needsAttune ? check(`${p}.attuned`, 'Attuned', { rerender: true }) : ''}
-        ${check(`${p}.equipped`, 'Equipped / carried', { rerender: true })}
-      </div>
-      ${textarea(`${p}.notes`, { rows: 2, placeholder: 'What it does, command words, where you found it…' })}
-    </div>`;
-  }).join('');
+  return list.map((i) => itemCard(i, 'magic')).join('');
 }
 function tabItems() {
   return `
   <section class="card">
     <h2>Magic items</h2>
-    <div class="row">
-      ${counter(attunedCount(), attunementLimit(lvl()), 'Attuned')}
-      ${lvl() >= 2 ? counter(replicated().length, at(MAGIC_ITEMS, lvl()), 'Replicated') : ''}
-    </div>
+    ${attuneBar()}
+    ${lvl() >= 2 ? `<div class="row">${counter(replicated().length, at(MAGIC_ITEMS, lvl()), 'Replicated')}</div>` : ''}
     <div class="filters">
       ${fsearch('items', 'Search items…')}
       ${chips('items', 'status', [['', 'All'], ['attuned', '★ Attuned'], ['equipped', 'Equipped'], ['needsAttune', 'Not yet attuned']])}
@@ -1153,23 +1240,23 @@ function tabItems() {
 // ----- Feats
 function featsList() {
   const f = F('feats');
+  const view = f.status || 'available'; // available = I qualify and don't have it (or it repeats) | taken | all
   const list = FEATS.filter((ft) => {
     const taken = hasFeat(ft.id);
     if (f.cat && ft.cat !== f.cat) return false;
     if (f.src && ft.src !== f.src) return false;
-    if (f.status === 'taken' && !taken) return false;
-    if (f.status === 'available' && (taken && !ft.repeatable)) return false;
-    if (f.eligible && !meetsReq(ft)) return false;
+    if (view === 'taken' && !taken) return false;
+    if (view === 'available' && ((taken && !ft.repeatable) || !meetsReq(ft))) return false;
     return matchQ('feats', ft.name, ft.sum, ft.cat, ft.src);
   });
-  if (!list.length) return '<p class="muted">No feat matches these filters.</p>';
+  if (!list.length) return `<p class="muted">${view === 'available' ? 'No more feats match these filters that you qualify for. Try "All".' : 'No feat matches these filters.'}</p>`;
   return list.map((ft) => {
     const taken = C().feats.filter((x) => x.featId === ft.id);
     const ok = meetsReq(ft);
     return `<div class="item ${taken.length ? 'sel' : ''} ${ok || taken.length ? '' : 'locked'}">
       <div class="row tight">
         <b class="grow">${esc(ft.name)}</b>
-        ${(!taken.length || ft.repeatable) ? `<button class="small ${ok ? 'ok' : ''}" data-action="takeFeat" data-id="${esc(ft.id)}">${taken.length ? 'Take again' : 'Take'}</button>` : ''}
+        ${(!taken.length || ft.repeatable) ? `<button class="small ${ok ? 'ok' : ''}" data-action="takeFeat" data-id="${esc(ft.id)}" aria-label="${taken.length ? 'Take again' : 'Take'} ${esc(ft.name)}">${taken.length ? 'Take again' : 'Take'}</button>` : ''}
       </div>
       <div class="row tight tags-row">
         ${taken.length ? `<span class="flag prepared">Taken${taken.length > 1 ? ` ×${taken.length}` : ''}</span>` : ''}
@@ -1182,25 +1269,25 @@ function featsList() {
         <div class="row taken">
           ${input(`character.feats.#${t.id}.level`, { label: 'Taken at level', type: 'number', min: 1, max: 20, cls: 'xs' })}
           ${input(`character.feats.#${t.id}.notes`, { label: 'Choices (ability +1, spells, skills…)', cls: 'grow' })}
-          <button class="icon danger" data-action="dropFeat" data-id="${esc(t.id)}" title="Remove" aria-label="Remove feat">✕</button>
+          <button class="icon danger" data-action="dropFeat" data-id="${esc(t.id)}" title="Remove" aria-label="Remove feat ${esc(ft.name)}">✕</button>
         </div>`).join('')}
     </div>`;
   }).join('');
 }
 function tabFeats() {
+  const mine = C().feats.map((t) => `<span class="pill">${esc(featById(t.featId)?.name || t.featId)} <small>L${esc(t.level)}</small></span>`).join('');
   return `
   <section class="card">
     <h2>Feats</h2>
-    <div class="row">${counter(C().feats.length, featSlots(), 'Feats taken')}</div>
-    <p class="hint">You get an Origin feat from your background, then a feat at levels 4, 8, 12, 16 and an Epic Boon at 19. In Eberron, certain house backgrounds grant a Dragonmark at level 1; otherwise take one as a feat from level 4. Sources: Player's Handbook 2024, Tasha's, Xanathar's, Forge of the Artificer. Where a Tasha's/Xanathar's feat was reprinted in the 2024 PHB, only the 2024 version is listed. Summaries are short reminders: check the book for exact rules.</p>
+    <div class="row yourfeats"><span class="counter ${C().feats.length > featSlots() ? 'over' : ''}">Your feats (${C().feats.length}): <b>${C().feats.length} / ${featSlots()}</b></span>${mine || '<span class="muted">none yet</span>'}</div>
+    <details class="howto"><summary>How feats work</summary><p class="hint">You get an Origin feat from your background, then a feat at levels 4, 8, 12, 16 and an Epic Boon at 19. In Eberron, certain house backgrounds grant a Dragonmark at level 1; otherwise take one as a feat from level 4. Sources: Player's Handbook 2024, Tasha's, Xanathar's, Forge of the Artificer. Where a Tasha's/Xanathar's feat was reprinted in the 2024 PHB, only the 2024 version is listed. Summaries are short reminders: check the book for exact rules.</p></details>
     <div class="filters">
       ${fsearch('feats', 'Search feats…')}
-      ${chips('feats', 'cat', [['', 'All'], ...FEAT_CATEGORIES.map((c) => [c, c === 'Greater Dragonmark' ? 'Greater marks (General)' : c])])}
-      ${chips('feats', 'status', [['', 'Any'], ['taken', '★ Taken'], ['available', 'Not taken']])}
-      <div class="row">
-        ${fselect('feats', 'src', [['', 'Any book'], ...FEAT_SOURCES.map((s) => [s, s])], 'Source')}
-        ${fcheck('feats', 'eligible', 'Only feats I qualify for')}
-      </div>
+      ${chips('feats', 'status', [['available', 'Available to me'], ['taken', '★ Taken'], ['all', 'All']], { def: 'available' })}
+      ${fmore('feats', ['cat', 'src'], `
+      ${chips('feats', 'cat', [['', 'All categories'], ...FEAT_CATEGORIES.map((c) => [c, c === 'Greater Dragonmark' ? 'Greater marks (General)' : c])])}
+      <div class="row">${fselect('feats', 'src', [['', 'Any book'], ...FEAT_SOURCES.map((s) => [s, s])], 'Source')}</div>
+      `)}
     </div>
     <div id="list">${featsList()}</div>
   </section>`;
@@ -1468,8 +1555,11 @@ function openSheet(kind, opener, init = {}) {
       <div class="sheet-body"></div>
     </section>`;
   renderSheet();
-  sheetRoot.querySelector('.sheet').focus({ preventScroll: true });
+  const first = sheetRoot.querySelector('[data-autofocus]');
+  (first || sheetRoot.querySelector('.sheet')).focus({ preventScroll: true });
 }
+// Cancel / Continue dialog for a risky choice. `run` is called when the player confirms.
+function confirmSheet(opener, c) { openSheet('confirm', opener, { c: { ok: 'Continue', tone: 'ok', ...c } }); }
 function closeSheet({ render: force = false } = {}) {
   if (!sh) return;
   const { opener, dirty } = sh;
@@ -1478,7 +1568,9 @@ function closeSheet({ render: force = false } = {}) {
   view.inert = false;
   document.body.classList.remove('sheet-open');
   if (force || dirty) render();
-  (opener && view.querySelector(opener) || view.querySelector('.dock button'))?.focus({ preventScroll: true });
+  const target = (opener && view.querySelector(opener)) || view.querySelector('.dock button');
+  if (target) target.focus({ preventScroll: true });
+  else { const panel = document.getElementById('panel'); panel?.setAttribute('tabindex', '-1'); panel?.focus({ preventScroll: true }); } // opener is gone (e.g. the item moved lists)
 }
 function renderSheet() {
   if (!sh) return;
@@ -1557,7 +1649,7 @@ function restSummary(kind, opts) {
   return lines;
 }
 
-const kpKinds = ['damage', 'heal', 'cannonhp'];
+const kpKinds = ['damage', 'heal', 'cannonhp', 'coin'];
 const incapacitating = (n) => n === 'Incapacitated' || /Incapacitated/.test(CONDITION_EFFECTS[n] || '');
 const concSpells = () => SPELLS.filter((s) => s.flags.includes('C') && spellStatus(s) !== 'none').sort((a, b) => a.level - b.level || a.name.localeCompare(b.name));
 
@@ -1661,6 +1753,38 @@ const SHEETS = {
         <ul class="pick-list">${avail.map(([l, n]) => `<li><button data-action="slotPick" data-level="${l}" data-fk="sl${l}"><span>Level ${l} slot</span><small>${n} left</small></button></li>`).join('') || '<li class="muted">No spell slots left.</li>'}</ul>`,
     };
   },
+  confirm() {
+    const c = sh.c;
+    return {
+      title: c.title,
+      body: `<p>${esc(c.text)}</p>
+        <div class="sheet-actions"><button class="big" data-action="closeSheet">Cancel</button><button class="${c.tone} big" data-action="confirmGo">${esc(c.ok)}</button></div>`,
+    };
+  },
+  generic() {
+    const base = PLANS.find((p) => p.id === sh.id);
+    const max = at(PLANS_KNOWN, lvl());
+    const over = knownPlans().length >= max;
+    return {
+      title: 'Learn an item',
+      body: `<p>${esc(base?.name || 'Plan')}: name the specific item you are learning.</p>
+        <label class="field"><span>Which item?</span><input data-sh="text" data-autofocus data-fk="gname" maxlength="60" autocomplete="off" value="${esc(sh.text)}" placeholder="e.g. Everbright Lantern"></label>
+        ${over ? `<p class="warn">You already know ${knownPlans().length} of ${max} plans. Learning this one puts you over your limit.</p>` : ''}
+        <div class="sheet-actions"><button class="big" data-action="closeSheet">Cancel</button><button class="ok big" data-action="genericGo" ${sh.text.trim() ? '' : 'disabled'}>${over ? 'Learn anyway' : 'Learn'}</button></div>`,
+    };
+  },
+  coin() {
+    const K = String(sh.key).toUpperCase();
+    const have = num(C().coins[sh.key]);
+    const amt = num(sh.amt);
+    return {
+      title: `${K} coins`,
+      body: `${kpDisplay()}
+        <p class="kp-preview">${amt ? `Add: ${have} → ${have + amt}. Spend: ${amt > have ? `not enough (you have ${have})` : `${have} → ${have - amt}`}.` : `You have ${have} ${K}. Type an amount.`}</p>
+        ${kpChips()}${keypad()}
+        <div class="sheet-actions"><button class="ok big" data-action="coinGo" data-dir="1" ${amt ? '' : 'disabled'}>Add</button><button class="big" data-action="coinGo" data-dir="-1" ${amt && amt <= have ? '' : 'disabled'}>Spend</button></div>`,
+    };
+  },
   detonate() {
     const st = cannonStats(lvl(), intMod());
     return {
@@ -1730,6 +1854,7 @@ const actions = {
     // re-render filter chips + list
     render();
   },
+  spellView: (el) => { F('spells').view = el.dataset.key; persist(); render(); },
   cycleSkill: (el) => { const k = el.dataset.key; C().skills[k] = (num(C().skills[k]) + 1) % 3; commit(); },
   setExhaustion: (el) => {
     const n = Number(el.dataset.n);
@@ -1756,7 +1881,8 @@ const actions = {
     refreshDerived();
     if (path === 'character.uses.cannon') render(); // the cannon card depends on the free use
   },
-  sheet: (el) => openSheet(el.dataset.kind, el, { id: el.dataset.id }),
+  sheet: (el) => openSheet(el.dataset.kind, el, { id: el.dataset.id, key: el.dataset.key }),
+  confirmGo: () => { const run = sh?.c?.run; if (!run) return; run(); closeSheet(); },
   closeSheet: () => closeSheet(),
   undo: (el) => undo(el),
   kp: (el) => {
@@ -1911,17 +2037,16 @@ const actions = {
     toast('Cannon detonated', { undo: true });
   },
   addAttack: () => {
-    C().attacks.push({ id: uid(), name: '', ability: 'dex', proficient: true, bonus: 0, dmgBonus: 0, addMod: true, mastery: '', notes: '', firearm: false, damages: [{ id: uid(), dice: '1d8', type: 'Piercing' }] });
-    commit();
+    mutate(() => { C().attacks.push({ id: uid(), name: '', ability: 'dex', proficient: true, bonus: 0, dmgBonus: 0, addMod: true, mastery: '', notes: '', firearm: false, damages: [{ id: uid(), dice: '1d8', type: 'Piercing' }] }); });
   },
   addDamage: (el) => {
     const list = getPath(el.dataset.path);
-    if (Array.isArray(list)) { list.push({ id: uid(), dice: '', type: '' }); commit(); }
+    if (Array.isArray(list)) mutate(() => { getPath(el.dataset.path).push({ id: uid(), dice: '', type: '' }); });
   },
   removeDamage: (el) => {
     const path = el.dataset.path;
     const list = getPath(path);
-    if (Array.isArray(list)) { setPath(path, list.filter((x) => x.id !== el.dataset.id)); commit(); }
+    if (Array.isArray(list)) mutate(() => { setPath(path, getPath(path).filter((x) => x.id !== el.dataset.id)); });
   },
   removeAttack: (el) => {
     const a = C().attacks.find((x) => x.id === el.dataset.id);
@@ -1929,80 +2054,129 @@ const actions = {
   },
   toggleSpell: (el) => {
     const s = SPELLS.find((x) => x.id === el.dataset.id);
-    const sp = C().spells;
-    if (sp[s.id]) delete sp[s.id];
-    else {
-      const max = s.level === 0 ? at(CANTRIPS, lvl()) : at(PREPARED, lvl());
-      const cur = s.level === 0 ? cantripCount() : preparedCount();
-      if (cur >= max && !confirm(`You already have ${cur} of ${max} ${s.level === 0 ? 'cantrips' : 'prepared spells'}. Add anyway?`)) return;
-      sp[s.id] = s.level === 0 ? 'known' : 'prepared';
-    }
-    persist(); render();
+    if (!s) return;
+    const had = !!C().spells[s.id];
+    const verb = had ? (s.level ? 'Unprepared' : 'Forgot') : (s.level ? 'Prepared' : 'Learned');
+    const apply = () => mutate(() => {
+      const sp = C().spells;
+      if (had) delete sp[s.id]; else sp[s.id] = s.level === 0 ? 'known' : 'prepared';
+    }, { msg: `${verb} ${s.name}` });
+    if (had) return apply();
+    const max = s.level === 0 ? at(CANTRIPS, lvl()) : at(PREPARED, lvl());
+    const cur = s.level === 0 ? cantripCount() : preparedCount();
+    if (cur < max) return apply();
+    confirmSheet(el, {
+      title: 'Over your limit',
+      text: `You have ${cur}/${max} ${s.level === 0 ? 'cantrips' : 'prepared'}. ${s.level ? 'Prepare' : 'Learn'} ${s.name} anyway?`,
+      ok: `${s.level ? 'Prepare' : 'Learn'} anyway`, run: apply,
+    });
   },
   togglePlan: (el) => {
     const c = C();
-    const custom = c.plans.custom.find((p) => p.id === el.dataset.id);
-    let removed = '';
-    if (custom) {
-      snap(); removed = custom.name;
-      c.plans.custom = c.plans.custom.filter((p) => p.id !== custom.id);
-      c.items = c.items.filter((i) => i.planId !== custom.id || i.origin !== 'replicated');
-    } else if (c.plans.known[el.dataset.id]) {
-      snap(); removed = allPlans().find((p) => p.id === el.dataset.id)?.name || 'Plan';
-      delete c.plans.known[el.dataset.id];
-      c.items = c.items.filter((i) => !(i.planId === el.dataset.id && i.origin === 'replicated'));
-    } else {
-      const max = at(PLANS_KNOWN, lvl());
-      if (knownPlans().length >= max && !confirm(`You already know ${knownPlans().length} of ${max} plans. Learn anyway?`)) return;
-      c.plans.known[el.dataset.id] = true;
+    const id = el.dataset.id;
+    const custom = c.plans.custom.find((p) => p.id === id);
+    if (custom || c.plans.known[id]) {
+      const name = custom ? custom.name : allPlans().find((p) => p.id === id)?.name || 'Plan';
+      return mutate(() => {
+        const cc = C();
+        if (custom) cc.plans.custom = cc.plans.custom.filter((p) => p.id !== id); else delete cc.plans.known[id];
+        cc.items = cc.items.filter((i) => !(i.planId === id && i.origin === 'replicated'));
+      }, { msg: `Plan removed: ${name}`, sub: 'Items made from it vanished.' });
     }
-    persist(); render();
-    if (removed) { buzz(10); toast(`Plan removed: ${removed}`, { undo: true, sub: 'Items made from it vanished.' }); }
-  },
-  learnGeneric: (el) => {
-    const base = PLANS.find((p) => p.id === el.dataset.id);
-    const name = prompt(`Which item? (${base.name})`, '');
-    if (!name?.trim()) return;
+    const name = allPlans().find((p) => p.id === id)?.name || 'Plan';
+    const apply = () => mutate(() => { C().plans.known[id] = true; }, { msg: `Learned ${name}` });
     const max = at(PLANS_KNOWN, lvl());
-    if (knownPlans().length >= max && !confirm(`You already know ${knownPlans().length} of ${max} plans. Learn anyway?`)) return;
-    C().plans.custom.push({ id: uid(), custom: true, tier: base.tier, name: name.trim(), type: base.type === 'Any' ? 'Wondrous' : base.type, attune: null, base: base.name });
-    commit();
+    if (knownPlans().length < max) return apply();
+    confirmSheet(el, { title: 'Over your limit', text: `You already know ${knownPlans().length} of ${max} plans. Learn ${name} anyway?`, ok: 'Learn anyway', run: apply });
+  },
+  learnGeneric: (el) => openSheet('generic', el, { id: el.dataset.id }),
+  genericGo: () => {
+    const base = PLANS.find((p) => p.id === sh.id);
+    const name = sh.text.trim();
+    if (!base || !name) return;
+    mutate(() => { C().plans.custom.push({ id: uid(), custom: true, tier: base.tier, name, type: base.type === 'Any' ? 'Wondrous' : base.type, attune: null, base: base.name }); }, { msg: `Learned ${name}` });
+    closeSheet();
   },
   craft: (el) => {
-    const c = C();
     const plan = allPlans().find((p) => p.id === el.dataset.id);
+    if (!plan) return;
     const max = at(MAGIC_ITEMS, lvl());
     const reps = replicated();
-    if (reps.length >= max) {
-      if (!confirm(`You already have ${reps.length} of ${max} replicated items. The oldest (${reps[0].name}) vanishes. Continue?`)) return;
-      c.items = c.items.filter((i) => i.id !== reps[0].id);
-    }
-    const rarity = plan.tier >= 14 ? 'Rare' : 'Uncommon';
-    const generic = /^(Armor|Weapon) \+\d/.test(plan.name); // base unknown: don't count it until the player picks one
-    c.items.push(newItem({ name: plan.name, origin: 'replicated', planId: plan.id, type: plan.type === 'Any' ? 'Other' : plan.type, rarity, needsAttune: plan.attune === true, equipped: !generic, notes: generic ? 'Choose the base armor/weapon in Equipment & bag, then equip it.' : '' }));
-    commit();
-    toast(`${plan.name} created: set rarity/charges on Magic items`);
+    const apply = () => mutate(() => {
+      const c = C();
+      const old = c.items.filter((i) => i.origin === 'replicated');
+      if (old.length >= max) c.items = c.items.filter((i) => i.id !== old[0].id);
+      const rarity = plan.tier >= 14 ? 'Rare' : 'Uncommon';
+      const generic = /^(Armor|Weapon) \+\d/.test(plan.name); // base unknown: don't count it until the player picks one
+      c.items.push(newItem({ name: plan.name, origin: 'replicated', planId: plan.id, type: plan.type === 'Any' ? 'Other' : plan.type, rarity, needsAttune: plan.attune === true, equipped: !generic, notes: generic ? 'Choose the base armor/weapon in Equipment & bag, then equip it.' : '' }));
+    }, { msg: `${plan.name} created`, sub: 'Set rarity and charges on Magic items.' });
+    if (reps.length < max) return apply();
+    confirmSheet(el, {
+      title: 'Over your item limit',
+      text: `You already have ${reps.length} of ${max} replicated items. Creating ${plan.name} makes the oldest one (${reps[0].name}) vanish.`,
+      ok: 'Continue', run: apply,
+    });
   },
   addItem: () => {
-    C().items.push(newItem());
-    commit();
+    const it = newItem();
+    openBlocks.add(`e-${it.id}`);
+    mutate(() => { C().items.push(it); });
+  },
+  toggleEquip: (el) => {
+    const it = C().items.find((x) => x.id === el.dataset.id);
+    if (!it) return;
+    const on = !it.equipped;
+    mutate(() => { it.equipped = on; }, { msg: `${it.name || 'Item'} ${on ? 'equipped' : 'put away'}` });
+  },
+  toggleNeeds: (el) => {
+    const it = C().items.find((x) => x.id === el.dataset.id);
+    if (!it) return;
+    const on = !it.needsAttune;
+    mutate(() => { it.needsAttune = on; if (!on) it.attuned = false; }, { msg: `${it.name || 'Item'}: ${on ? 'requires attunement' : 'no attunement needed'}` });
+  },
+  toggleAttune: (el) => {
+    const it = C().items.find((x) => x.id === el.dataset.id);
+    if (!it) return;
+    const on = !it.attuned;
+    mutate(() => { it.attuned = on; }, { msg: `${it.name || 'Item'} ${on ? 'attuned' : 'no longer attuned'}`, sub: on && attunedCount() >= attunementLimit(lvl()) ? `That is over your limit of ${attunementLimit(lvl())} attuned items.` : '' });
+  },
+  qty: (el) => {
+    const it = C().items.find((x) => x.id === el.dataset.id);
+    if (!it) return;
+    const n = Math.max(0, num(it.qty) + Number(el.dataset.d));
+    mutate(() => { it.qty = n; }, { vib: 5, msg: `Quantity ${n}` });
+  },
+  coinGo: (el) => {
+    const amt = Math.floor(num(sh.amt)) * Number(el.dataset.dir);
+    const k = sh.key;
+    const have = num(C().coins[k]);
+    if (!amt || have + amt < 0) return;
+    snap();
+    C().coins[k] = have + amt;
+    persist();
+    closeSheet({ render: true });
+    buzz(10);
+    toast(`${amt > 0 ? 'Added' : 'Spent'} ${Math.abs(amt)} ${k.toUpperCase()}: now ${have + amt}`, { undo: true });
   },
   addMenu: () => { addMenuOpen = !addMenuOpen; render(); },
   addEquip: (el) => {
     const kind = el.dataset.kind;
-    C().items.push(newItem({ origin: 'bought', rarity: 'Mundane', type: kind }));
+    const it = newItem({ origin: 'bought', rarity: 'Mundane', type: kind });
+    openBlocks.add(`e-${it.id}`);
     addMenuOpen = false;
-    commit();
+    mutate(() => { C().items.push(it); });
   },
   removeItem: (el) => {
     const it = C().items.find((x) => x.id === el.dataset.id);
     mutate(() => { C().items = C().items.filter((x) => x.id !== el.dataset.id); }, { msg: `Deleted ${it?.name ? `"${it.name}"` : 'item'}` });
+    openBlocks.delete(`e-${el.dataset.id}`);
   },
   takeFeat: (el) => {
     const ft = featById(el.dataset.id);
-    if (!meetsReq(ft) && !confirm(`You don't seem to meet the prerequisite (${reqText(ft)}). Take it anyway?`)) return;
-    C().feats.push({ id: uid(), featId: ft.id, level: lvl(), notes: '' });
-    commit();
+    if (!ft) return;
+    const apply = () => mutate(() => { C().feats.push({ id: uid(), featId: ft.id, level: lvl(), notes: '' }); }, { msg: `Took ${ft.name}` });
+    if (meetsReq(ft)) return apply();
+    confirmSheet(el, { title: 'Prerequisite not met', text: `You don't seem to meet the prerequisite (${reqText(ft)}). Take ${ft.name} anyway?`, ok: 'Take anyway', run: apply });
   },
   dropFeat: (el) => {
     mutate(() => { C().feats = C().feats.filter((x) => x.id !== el.dataset.id); }, { msg: 'Feat removed' });
@@ -2036,7 +2210,11 @@ document.addEventListener('click', (e) => {
   if (el && actions[el.dataset.action] && !el.disabled) { e.preventDefault(); actions[el.dataset.action](el); }
 });
 // Sheet: text field, checkbox, Esc to close, Tab kept inside, digits on a hardware keyboard.
-sheetRoot.addEventListener('input', (e) => { if (e.target.dataset.sh === 'text') sh.text = e.target.value; });
+sheetRoot.addEventListener('input', (e) => {
+  if (e.target.dataset.sh !== 'text') return;
+  sh.text = e.target.value;
+  if (sh.kind === 'generic') sheetRoot.querySelector('[data-action="genericGo"]').disabled = !sh.text.trim();
+});
 sheetRoot.addEventListener('change', (e) => {
   if (e.target.dataset.sh === 'clear') { sh.clear = e.target.checked; renderSheet(); }
 });
@@ -2052,7 +2230,11 @@ document.addEventListener('keydown', (e) => {
     else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
     return;
   }
-  if (e.key === 'Enter' && e.target.dataset?.sh === 'text' && sh.kind === 'conc') { e.preventDefault(); actions.concOther(); return; }
+  if (e.key === 'Enter' && e.target.dataset?.sh === 'text') {
+    e.preventDefault();
+    if (sh.kind === 'conc') actions.concOther(); else if (sh.kind === 'generic') actions.genericGo();
+    return;
+  }
   if (kpKinds.includes(sh.kind) && e.target.tagName !== 'INPUT' && !e.ctrlKey && !e.metaKey && !e.altKey) {
     if (/^\d$/.test(e.key)) actions.kp({ dataset: { k: e.key } });
     else if (e.key === 'Backspace') actions.kp({ dataset: { k: 'back' } });
@@ -2098,14 +2280,31 @@ view.addEventListener('change', (e) => {
   if (el.dataset.catalog) applyCatalog(el);
   if (el.dataset.bind && (el.hasAttribute('data-rerender') || el.type === 'checkbox' || el.tagName === 'SELECT')) setTimeout(render, 0);
 });
+// Bodies of spell cards and item Edit blocks are built when opened and dropped when closed (keeps the page small).
+const LAZY = {
+  spell: (id) => { const sp = SPELLS.find((x) => x.id === id); return sp ? spellBody(sp) : ''; },
+  equip: (id) => { const it = C().items.find((x) => x.id === id); return it ? itemEdit(it, 'equip') : ''; },
+  magic: (id) => { const it = C().items.find((x) => x.id === id); return it ? itemEdit(it, 'magic') : ''; },
+};
 view.addEventListener('toggle', (e) => {
-  if (e.target.dataset?.fmore) { if (e.target.open) openFilters.add(e.target.dataset.fmore); else openFilters.delete(e.target.dataset.fmore); return; }
-  if (e.target.dataset?.block) { if (e.target.open) openBlocks.add(e.target.dataset.block); else openBlocks.delete(e.target.dataset.block); return; }
-  const sp = e.target.dataset?.spell;
-  if (sp) { if (e.target.open) openSpells.add(sp); else openSpells.delete(sp); return; }
-  const id = e.target.dataset?.session;
+  const t = e.target;
+  const d = t.dataset || {};
+  if (d.fmore) { if (t.open) openFilters.add(d.fmore); else openFilters.delete(d.fmore); return; }
+  if (d.lazy) {
+    const [kind, id] = d.lazy.split(':');
+    const set = kind === 'spell' ? openSpells : openBlocks;
+    const key = kind === 'spell' ? id : d.block;
+    const body = t.querySelector(':scope > .lazy-body');
+    if (t.open) {
+      set.add(key);
+      if (!body) t.insertAdjacentHTML('beforeend', `<div class="lazy-body">${LAZY[kind](id)}</div>`);
+    } else { set.delete(key); body?.remove(); }
+    return;
+  }
+  if (d.block) { if (t.open) openBlocks.add(d.block); else openBlocks.delete(d.block); return; }
+  const id = d.session;
   if (!id) return;
-  if (e.target.open) openSessions.add(id); else openSessions.delete(id);
+  if (t.open) openSessions.add(id); else openSessions.delete(id);
 }, true);
 
 // Picking a base weapon/armor fills in its numbers (and the name when empty); everything stays editable.
