@@ -19,7 +19,7 @@ A fixed bottom bar has five sections: **Combat**, **Spells**, **Workshop** (Equi
 | **Plans** | Every Replicate Magic Item plan by tier (level 2+, 6+, 10+, 14+). Learn or forget plans, learn the "any Common / Uncommon Wondrous / Rare Wondrous" options as named items, and **Create** an item into Magic items (a sheet warns which item vanishes if you go over your limit). Default view: known plans first, then plans you can learn now; chips for Known and All |
 | **Magic items** | Non-mundane items you replicated or found: rarity, type, attunement (counter against 3/4/5/6), equipped, charges, notes |
 | **Feats** | PHB 2024, Tasha's, Xanathar's and Forge of the Artificer feats (Dragonmarks, Greater Dragonmarks, Boon of Siberys), with prerequisites checked against your character. Default view "Available to me" (eligible and not yet taken), plus Taken and All, and a "Your feats" summary; taking one without meeting the prerequisite asks in a sheet |
-| **★ Selected** | Everything you've chosen in one place: spells by level, known plans, items, feats, skills, conditions |
+| **★ Selected** | A read-only overview of what is chosen right now: AC / Prof / Spell DC, concentration and conditions, spells by level (always-prepared marked), known plans, equipped and attuned items, feats, skills with modifiers. Each card has an Open button to the page where you change it |
 | **Journal** | Sub-tabs for Sessions, NPCs, Places, Factions and Quests. Every entry has tags, notes and a delete that can be undone; each list has search, tag filter chips and collapsed cards. NPCs and factions show an attitude badge, quests a status badge and step progress (2/5). A search box at the top searches the whole journal and groups the results by kind |
 | **Voice** | Personality, ideals, bonds, flaws, speech quirks, goals and hooks (a checklist), and short in-character lines with a Copy button. Old appearance/backstory notes sit in a collapsed Background notes block |
 | **Campaign & data** | Campaign notes, backup share/download/import (journal and voice are included), and **Snapshots**: automatic copies of your data kept only on this device (one daily, one before the last long rest, and the 3 newest "important" ones: before an upgrade, import, restore, delete everything, or when saved data could not be read) with Restore and Download |
@@ -49,6 +49,10 @@ To run it locally instead: `python3 -m http.server 8000`, then open `http://loca
 - To move your character: **Campaign & data → Share backup** (Android: send it to Drive, WhatsApp, email…) or **Download backup**. On the other device, use **Import backup**. Importing replaces that device's data.
 - Clearing browser data deletes it. Export a backup after every session.
 
+## Updates
+
+The app updates itself in the background. When a new version has been installed, a banner at the bottom says **DnD Slop was updated** with a **Reload** button; nothing reloads until you tap it (your data is saved first). The current version is shown in **Campaign & data → About and credits**.
+
 ## Google Drive sync (optional)
 
 **Campaign & data → Google Drive → Connect Google Drive** copies your save into one visible folder, **DnD Slop**, in your own Google Drive (`dnd-slop-save.json`, plus a daily backup `dnd-slop-YYYY-MM-DD.json`; the newest 7 are kept). The app asks only for the `drive.file` permission, so it **can't see any other file in your Drive**. The data is always saved on the device first; Drive is a mirror, and the app works fully offline.
@@ -59,7 +63,7 @@ To run it locally instead: `python3 -m http.server 8000`, then open `http://loca
 - **Two devices:** if Drive has newer data than your last sync and this device also has unsynced changes, a sheet lets you use the Drive version (your current data is first saved as a snapshot), keep this device's version (the Drive version is first copied to a `dnd-slop-conflict-…` file), or cancel.
 - **Privacy:** no tokens are stored on the device or in backups. Disconnect revokes access when you are signed in; to fully remove the app's access at any time, visit myaccount.google.com/permissions. Files already in Drive stay until you delete them.
 - **Imports:** after you import a backup or restore a snapshot, nothing is uploaded automatically; the next sync asks first, and the current Drive copy is saved as `dnd-slop-before-import-…` before it is replaced.
-- Not yet verified in real use: the pop-up inside the installed Android app, silent renewal of the pass, and the 7-day re-approval.
+- The sign-in pop-up has been confirmed working by the owner (2026-11-10, device not specified). Not yet verified in real use: silent renewal of the pass and the 7-day re-approval.
 
 ## Rules accuracy
 
@@ -81,6 +85,7 @@ index.html, css/styles.css, sw.js, manifest.webmanifest
 js/app.js              UI and actions
 js/store.js            saving, import/export, migration from the first version
 js/drive.js            optional Google Drive sync (loaded on demand)
+js/version.js          APP_VERSION shown in Campaign & data (keep in step with sw.js)
 js/rules.js            generic 2024 rules data
 js/data/artificer.js   class table, features, Artillerist, cannon math
 js/data/spells.js      Artificer spell list (+ Artillerist, + legacy)

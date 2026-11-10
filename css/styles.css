@@ -402,6 +402,10 @@ summary { cursor: pointer; min-height: var(--hit); }
 .jcard > summary::-webkit-details-marker { display: none; }
 .jcard[open] > summary { margin-bottom: var(--s-1); }
 .jcard:not([open]) { content-visibility: auto; contain-intrinsic-size: auto 4.25rem; } /* long journal lists: skip layout/paint of cards that are off screen */
+#list > div.item { content-visibility: auto; contain-intrinsic-size: auto 8rem; } /* feat rows and spell wrappers (one level only, not the nested .spell-card) */
+#list > div.item.spell { contain-intrinsic-size: auto 4.5rem; }
+/* paint containment clips outside outlines: keep the focus ring inside closed cards */
+.jcard:not([open]) > summary:focus-visible, #list > div.item .spell-card > summary:focus-visible { outline-offset: -3px; }
 .jsum { display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto; padding: var(--s-1) 0; }
 .jsum b, .jsum small { overflow-wrap: anywhere; }
 .jbadge, .jprog { flex: 0 0 auto; font-size: var(--fs-xs); font-weight: 700; padding: 2px var(--s-2); border: 1px solid currentColor; border-radius: var(--r-pill); color: var(--ink-3); }
@@ -452,6 +456,30 @@ body.sheet-open #toasts { bottom: auto; top: calc(env(safe-area-inset-top) + var
 .toast-msg span:not(:empty) { color: var(--on-plate); font-weight: 600; }
 .toast-undo, .toast-open { flex: 0 0 auto; min-width: var(--hit); color: var(--on-plate); border-color: var(--brass-2); background: var(--ember-soft); }
 @keyframes toast-in { from { opacity: 0; transform: translateY(8px); } }
+
+
+/* Skip link: first focusable element, visible only on focus. */
+.skip { position: fixed; left: var(--s-3); top: var(--s-3); z-index: 100; transform: translateY(-200%); padding: var(--s-3) var(--s-4); min-height: var(--hit); display: inline-flex; align-items: center;
+  background: var(--card); color: var(--ink); border: 2px solid var(--brass); border-radius: var(--r-2); font-weight: 700; text-decoration: none; }
+.skip:focus { transform: none; }
+body.sheet-open .skip { display: none; }
+#main:focus { outline: none; }
+.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.sr-only::after { content: none; }
+
+/* Update banner: stays until dismissed or reloaded; hidden (not removed) while a sheet is open. */
+#update-banner {
+  position: fixed; left: var(--s-4); right: var(--s-4); bottom: calc(var(--nav-h) + env(safe-area-inset-bottom) + var(--s-3)); z-index: 61; max-width: 40rem; margin: 0 auto;
+  display: flex; align-items: center; gap: var(--s-2); padding: var(--s-2) var(--s-2) var(--s-2) var(--s-4);
+  background: linear-gradient(var(--plate-a), var(--plate-b)); color: var(--on-plate); border: 1px solid var(--brass-2); border-radius: var(--r-2); font-size: var(--fs-sm); box-shadow: var(--sh-2);
+}
+#update-banner .toast-msg { flex: 1 1 auto; }
+#update-banner button { min-height: var(--hit); min-width: var(--hit); }
+body.has-dock #update-banner { bottom: calc(var(--nav-h) + var(--dock-h) + env(safe-area-inset-bottom) + var(--s-3)); }
+body.has-update #toasts { transform: translateY(calc(-1 * (var(--hit) + var(--s-5)))); }
+body.sheet-open #update-banner { display: none; }
+.sel-stats { display: flex; flex-wrap: wrap; gap: var(--s-2); margin: var(--s-2) 0; }
+.sel-note { margin: var(--s-2) 0 0; }
 
 /* ---- Filters, chips, flags ---- */
 .filters { border: 1px solid var(--line); border-radius: var(--r-2); padding: var(--s-3); margin: var(--s-3) 0 var(--s-4); background: var(--card-2); }

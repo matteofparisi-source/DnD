@@ -3,7 +3,8 @@ import {
   PLANS_KNOWN, MAGIC_ITEMS, CANTRIPS, PREPARED, SLOTS, attunementLimit, maxSpellLevel, at, SKILL_CHOICES,
   PROFICIENCIES, ARTILLERIST_PROFICIENCIES, FEATURES, USES, ARTILLERIST_SPELLS, cannonStats, SPECIES_SUGGESTIONS,
 } from './data/artificer.js';
-import { SPELLS, SOURCE_LABEL, SCHOOLS } from './data/spells.js';
+import { SPELLS, SOURCE_LABEL, SCHOOLS, slug } from './data/spells.js';
+import { APP_VERSION } from './version.js';
 import { PLANS, PLAN_TYPES, TIERS } from './data/plans.js';
 import { FEATS, FEAT_CATEGORIES, FEAT_SOURCES } from './data/feats.js';
 import { WEAPONS, ARMOR } from './data/equipment.js';
@@ -701,7 +702,7 @@ function exhaustionMeter() {
   const segs = [1, 2, 3, 4, 5, 6].map((n) => `<button class="xseg s${n} ${n <= e ? 'on' : ''}" data-action="setExhaustion" data-fk="x${n}" data-n="${n}" aria-label="Exhaustion ${n}" aria-pressed="${n <= e}">${n}</button>`).join('');
   return `
     <div class="xmeter">
-      <button class="xseg s0 ${e === 0 ? 'on' : ''}" data-action="setExhaustion" data-fk="x0" data-n="0" aria-label="No exhaustion" aria-pressed="${e === 0}">0</button>${segs}
+      <button class="xseg s0 ${e === 0 ? 'on' : ''}" data-action="setExhaustion" data-fk="x0" data-n="0" aria-label="Exhaustion 0, none" aria-pressed="${e === 0}">0</button>${segs}
     </div>
     <p class="xlabel ${e >= 6 ? 'dead' : ''}">${calcSpan('exhaustion')}</p>`;
 }
@@ -823,7 +824,7 @@ function tabCombat() {
 // Fixed bar above the bottom navigation (Combat only): quick Damage, Heal and Rest.
 function dock() {
   return `
-  <div class="dock" role="group" aria-label="Hit points">
+  <div class="dock" role="region" aria-label="Hit points and quick actions">
     <button class="dock-btn danger" data-action="sheet" data-kind="damage">Damage</button>
     <div class="dock-hp">
       <div class="dock-line"><b class="dock-num" data-calc="hpcur">${calc('hpcur')}</b><span class="dock-max">/ <span data-calc="hpmax">${calc('hpmax')}</span> HP</span></div>
@@ -1190,7 +1191,7 @@ function coinsCard() {
   <section class="card">
     <h2>Coins & other gear</h2>
     <div class="coins" role="group" aria-label="Coins">${['cp', 'sp', 'ep', 'gp', 'pp'].map((k) =>
-      `<button class="coin" data-action="sheet" data-kind="coin" data-key="${k}" aria-label="${k.toUpperCase()}: ${num(c[k])}. Add or spend"><small>${k.toUpperCase()}</small><b>${num(c[k])}</b></button>`).join('')}</div>
+      `<button class="coin" data-action="sheet" data-kind="coin" data-key="${k}" aria-label="${k.toUpperCase()} ${num(c[k])}, add or spend"><small>${k.toUpperCase()}</small> <b>${num(c[k])}</b></button>`).join('')}</div>
     <p class="coin-total">Total: <b>${fmtGp(total)} gp</b></p>
     <p class="hint">Tap a coin to add or spend. Total uses the SRD coin values (100 cp = 10 sp = 2 ep = 1 gp; 1 pp = 10 gp).</p>
     ${textarea('character.gear', { label: 'Other notes about gear', rows: 5 })}
@@ -1324,37 +1325,43 @@ function tabFeats() {
   </section>`;
 }
 
-// ----- Selected (everything chosen / prepared)
+// ----- Selected (read-only overview of what is chosen right now; each card has an Open button to the page where it is edited)
 function tabSelected() {
   const c = C();
   const spells = SPELLS.filter((s) => spellStatus(s) !== 'none').sort((a, b) => a.level - b.level || a.name.localeCompare(b.name));
   const byLevel = [0, 1, 2, 3, 4, 5].map((l) => {
     const sp = spells.filter((s) => s.level === l);
     if (!sp.length) return '';
-    return `<div class="sel-group">${lvlTag(l)} ${sp.map((s) => `<span class="pill ${spellStatus(s)}">${esc(s.name)}${s.flags.includes('C') ? ' <small>C</small>' : ''}${s.flags.includes('R') ? ' <small>R</small>' : ''}</span>`).join('')}</div>`;
+    return `<div class="sel-group">${lvlTag(l)} ${sp.map((s) => `<span class="pill ${spellStatus(s)}">${esc(s.name)}${spellStatus(s) === 'always' ? ' <small>always</small>' : ''}${s.flags.includes('C') ? ' <small>C</small>' : ''}${s.flags.includes('R') ? ' <small>R</small>' : ''}</span>`).join('')}</div>`;
   }).join('');
   const plans = knownPlans().map((p) => `<span class="pill">${esc(p.name)} <small>L${p.tier}+</small></span>`).join('');
-  const eqPills = equippedItems().map((i) => {
+  const equipped = equippedItems().map((i) => {
     const fx = itemEffect(i);
-    return `<span class="pill">${esc(i.name || 'Unnamed item')}${fx ? ` <small>${esc(fx)}</small>` : ''}</span>`;
+    return `<span class="pill">${esc(i.name || 'Unnamed item')}${i.attuned ? ' <small>attuned</small>' : ''}${fx ? ` <small>${esc(fx)}</small>` : ''}</span>`;
   }).join('');
-  const items = c.items.filter((i) => i.rarity !== 'Mundane').map((i) => `<span class="pill ${i.attuned ? 'always' : ''}">${esc(i.name || 'Unnamed item')}${i.attuned ? ' <small>attuned</small>' : ''}${i.chargesMax ? ` <small>${num(i.charges)}/${num(i.chargesMax)}</small>` : ''}</span>`).join('');
-  const feats = c.feats.map((t) => { const ft = featById(t.featId); return `<span class="pill">${esc(ft?.name || t.featId)} <small>L${esc(t.level)}</small>${t.notes ? ` <small>${esc(t.notes)}</small>` : ''}</span>`; }).join('');
-  const skills = SKILLS.filter((s) => num(c.skills[s.key])).map((s) => `<span class="pill">${s.name} ${calcSpan(`skill:${s.key}`)}</span>`).join('');
-  const section = (title, tab, count, body) => `
-    <section class="card">
-      <div class="row tight"><h2 class="grow">${title}</h2>${count}<button class="small" data-action="tab" data-key="${tab}">Open</button></div>
+  const attunedOnly = c.items.filter((i) => i.attuned && !i.equipped).map((i) => `<span class="pill always">${esc(i.name || 'Unnamed item')} <small>attuned</small></span>`).join('');
+  const feats = c.feats.map((t) => { const ft = featById(t.featId); return `<span class="pill">${esc(ft?.name || t.featId)} <small>L${esc(t.level)}</small></span>`; }).join('');
+  const skills = SKILLS.filter((s) => num(c.skills[s.key])).map((s) => `<span class="pill ${num(c.skills[s.key]) > 1 ? 'always' : ''}">${s.name} ${calcSpan(`skill:${s.key}`)}${num(c.skills[s.key]) > 1 ? ' <small>expertise</small>' : ''}</span>`).join('');
+  const conc = c.concentration?.name;
+  const conds = c.conditions.map((x) => `<span class="pill always">${esc(x)}</span>`).join('');
+  const exh = num(c.exhaustion) ? `<span class="pill always">Exhaustion ${num(c.exhaustion)}</span>` : '';
+  const section = (title, tab, count, body, view = '') => `
+    <section class="card" aria-labelledby="sel-${slug(title)}">
+      <div class="row tight"><h2 class="grow" id="sel-${slug(title)}">${title}</h2>${count}<button class="small" data-action="selOpen" data-key="${tab}" ${view ? `data-view="${view}"` : ''} aria-label="Open ${esc(title)}">Open</button></div>
       ${body || '<p class="muted">Nothing selected yet.</p>'}
     </section>`;
   return `
+  <p class="hint sel-note">A read-only summary. Use Open to change anything.</p>
+  ${section('Right now', 'combat', '', `
+    <div class="sel-stats"><span class="counter">AC <b>${acInfo().ac}</b></span><span class="counter">Prof <b>${fmt(pb())}</b></span><span class="counter">Spell DC <b>${spellDC()}</b></span><span class="counter">Spell atk <b>${fmt(spellAtk())}</b></span></div>
+    <div class="sel-group"><span class="muted">Concentration</span> ${conc ? `<span class="pill always">${esc(conc)}</span>` : '<span class="muted">none</span>'}</div>
+    <div class="sel-group"><span class="muted">Conditions</span> ${conds || exh ? `${conds}${exh}` : '<span class="muted">none</span>'}</div>`)}
   ${section('Spells', 'spells', `${counter(preparedCount(), at(PREPARED, lvl()), 'Prepared')} ${counter(cantripCount(), at(CANTRIPS, lvl()), 'Cantrips')}`,
-    byLevel && `${byLevel}<p class="hint"><span class="pill always">Always prepared</span> <span class="pill prepared">Prepared / known</span> C = Concentration, R = Ritual</p>`)}
+    byLevel && `${byLevel}<p class="hint"><span class="pill always">Always prepared</span> <span class="pill prepared">Prepared / known</span> C = Concentration, R = Ritual</p>`, 'mine')}
   ${lvl() >= 2 ? section('Known plans', 'plans', counter(knownPlans().length, at(PLANS_KNOWN, lvl()), 'Known'), plans && `<div class="sel-group">${plans}</div>`) : ''}
-  ${section('Equipped', 'equipment', `<span class="counter">AC <b>${acInfo().ac}</b></span>`, eqPills && `<div class="sel-group">${eqPills}</div>`)}
-  ${section('Magic items', 'items', counter(attunedCount(), attunementLimit(lvl()), 'Attuned'), items && `<div class="sel-group">${items}</div>`)}
+  ${section('Equipped and attuned', 'equipment', `<span class="counter">Equipped <b>${equippedItems().length}</b></span>${counter(attunedCount(), attunementLimit(lvl()), 'Attuned')}`, (equipped || attunedOnly) && `<div class="sel-group">${equipped}${attunedOnly}</div>`)}
   ${section('Feats', 'feats', counter(c.feats.length, featSlots(), 'Taken'), feats && `<div class="sel-group">${feats}</div>`)}
-  ${section('Skill proficiencies', 'stats', '', skills && `<div class="sel-group">${skills}</div>`)}
-  ${c.conditions.length ? section('Active conditions', 'combat', '', `<div class="sel-group">${c.conditions.map((x) => `<span class="pill always">${x}</span>`).join('')}</div>`) : ''}`;
+  ${section('Skills', 'stats', '', skills && `<div class="sel-group">${skills}</div>`)}`;
 }
 
 // ----- Journal
@@ -1526,7 +1533,7 @@ function jResults() {
   }).join('');
   const chipBar = tags.length ? `<div class="chips" role="group" aria-label="Filter results by tag">${[['', 'All tags'], ...tags.map((t) => [t, `#${t}`])].map(([v, t]) =>
     `<button class="chip-btn ${jtag === v ? 'on' : ''}" data-action="jtag" data-val="${esc(v)}" aria-pressed="${jtag === v}">${esc(t)}</button>`).join('')}</div>` : '';
-  return `${chipBar}${groups || '<p class="muted" role="status">Nothing in the journal matches.</p>'}`;
+  return `${chipBar}<h2 class="sr-only">Search results</h2>${groups || '<p class="muted" role="status">Nothing in the journal matches.</p>'}`;
 }
 function journalShell(coll) {
   return `
@@ -1632,7 +1639,8 @@ function tabData() {
   ${driveCard()}
   ${snapshotsCard()}
   <section class="card credits">
-    <h2>Credits</h2>
+    <h2>About and credits</h2>
+    <p class="muted">DnD Slop &middot; Version <b>${esc(APP_VERSION)}</b></p>
     <p>This work includes material from the System Reference Document 5.2.1 (&ldquo;SRD 5.2.1&rdquo;) by Wizards of the Coast LLC, available at <a href="https://www.dndbeyond.com/srd" target="_blank" rel="noopener">https://www.dndbeyond.com/srd</a>. The SRD 5.2.1 is licensed under the Creative Commons Attribution 4.0 International License, available at <a href="https://creativecommons.org/licenses/by/4.0/legalcode" target="_blank" rel="noopener">https://creativecommons.org/licenses/by/4.0/legalcode</a>.</p>
     <p>Spell descriptions marked &ldquo;SRD 5.2.1 &middot; official text&rdquo; are copied from the SRD. Other rules data is our own summary of community sources and is unverified.</p>
     <p>Fonts Source Sans 3 and IM Fell English SC are used under the <a href="https://openfontlicense.org" target="_blank" rel="noopener">SIL Open Font License 1.1</a>.</p>
@@ -1654,10 +1662,12 @@ function render() {
   const navFocus = ae?.closest?.('.bnav, .seg') ? `${ae.closest('.bnav') ? '.bnav' : '.seg'} [data-key="${ae.dataset.key}"]` : '';
   view.innerHTML = `
     ${header(!combat)}
+    <main id="main" tabindex="-1">
     <div id="driveStrip" class="drive-strip ${driveStripState().empty ? 'is-empty' : ''}">${driveStripInner()}</div>
     ${combat ? '' : statusStrip(true)}
     ${sec.tabs ? subTabs(sec, tab) : ''}
-    <main id="panel" ${sec.tabs ? `role="tabpanel" aria-labelledby="tab-${tab}"` : `aria-label="${sec.label}"`}>${RENDER[tab]()}</main>
+    <div id="panel" ${sec.tabs ? `role="tabpanel" aria-labelledby="tab-${tab}"` : ''}>${RENDER[tab]()}</div>
+    </main>
     <footer class="muted"><span id="saveStatus">Saved</span> · Artificer (Forge of the Artificer) · D&D 2024 rules</footer>
     ${datalists()}
     ${combat ? dock() : ''}
@@ -1814,7 +1824,7 @@ function closeSheet({ render: force = false } = {}) {
   if (force || dirty) render();
   const target = (opener && view.querySelector(opener)) || view.querySelector('.dock button');
   if (target) target.focus({ preventScroll: true });
-  else { const panel = document.getElementById('panel'); panel?.setAttribute('tabindex', '-1'); panel?.focus({ preventScroll: true }); } // opener is gone (e.g. the item moved lists)
+  else { document.getElementById('main')?.focus({ preventScroll: true }); } // opener is gone (e.g. the item moved lists)
 }
 function renderSheet() {
   if (!sh) return;
@@ -2143,6 +2153,9 @@ const actions = {
     // re-render filter chips + list
     render();
   },
+  reloadApp: () => { clearTimeout(saveTimer); save(state); location.reload(); }, // save() respects the unreadable-data hold (never saveNow(), which releases it)
+  dismissUpdate: () => { document.getElementById('update-banner')?.remove(); document.body.classList.remove('has-update'); },
+  selOpen: (el) => { if (el.dataset.view) F('spells').view = el.dataset.view; setTab(el.dataset.key); jq = ''; jtag = ''; commit(); window.scrollTo(0, 0); },
   spellView: (el) => { F('spells').view = el.dataset.key; persist(); render(); },
   cycleSkill: (el) => { const k = el.dataset.key; C().skills[k] = (num(C().skills[k]) + 1) % 3; commit(); },
   setExhaustion: (el) => {
@@ -2638,6 +2651,7 @@ document.addEventListener('click', (e) => {
   const el = e.target.closest('[data-action]');
   if (el && actions[el.dataset.action] && !el.disabled) { e.preventDefault(); actions[el.dataset.action](el); }
 });
+document.getElementById('skip')?.addEventListener('click', (e) => { e.preventDefault(); document.getElementById('main')?.focus(); });
 // Sheet: text field, checkbox, Esc to close, Tab kept inside, digits on a hardware keyboard.
 sheetRoot.addEventListener('input', (e) => {
   if (e.target.dataset.sh === 'f') {
@@ -2859,7 +2873,7 @@ function driveStripState() {
   const msg = on ? driveRt.msg : '';
   return { btn, msg, empty: !btn && !msg };
 }
-const driveStripInner = () => { const s = driveStripState(); return `<span id="driveStripBtn">${s.btn}</span><small id="driveStripMsg" class="muted" role="status" aria-live="polite">${esc(s.msg)}</small>`; };
+const driveStripInner = () => { const s = driveStripState(); return `<span id="driveStripBtn">${s.btn}</span><small id="driveStripMsg" class="muted" ${state.ui.tab === 'data' ? '' : 'role="status" aria-live="polite"'}>${esc(s.msg)}</small>`; };
 function driveStatusHtml() {
   const d = dv();
   const on = driveOn();
@@ -3142,7 +3156,28 @@ window.addEventListener('pagehide', () => save(state));
 
 if (navigator.storage?.persist) navigator.storage.persist().catch(() => {});
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+  // Update banner: when a new service worker takes over a page that already had one, offer a reload (never reload on its own).
+  const hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController) showUpdateBanner(); });
   navigator.serviceWorker.register('./sw.js').catch((e) => console.warn('Service worker not registered', e));
+  // Installed apps stay open for days: check for a new version when the app comes back to the front, at most every 30 minutes.
+  let lastUpdateCheck = Date.now();
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible' || Date.now() - lastUpdateCheck < 30 * 60 * 1000) return;
+    lastUpdateCheck = Date.now();
+    navigator.serviceWorker.getRegistration().then((r) => r?.update()).catch(() => {});
+  });
+}
+function showUpdateBanner() {
+  if (document.getElementById('update-banner')) return;
+  const b = document.createElement('div');
+  b.id = 'update-banner';
+  b.setAttribute('role', 'status'); // inserted empty, filled on the next tick so screen readers announce the text
+  document.body.appendChild(b);
+  document.body.classList.add('has-update');
+  setTimeout(() => {
+    if (b.isConnected) b.innerHTML = '<span class="toast-msg"><b>DnD Slop was updated</b></span><button class="toast-undo" data-action="reloadApp">Reload</button><button class="toast-open" data-action="dismissUpdate" aria-label="Dismiss update notice">&times;</button>';
+  }, 100);
 }
 
 render();

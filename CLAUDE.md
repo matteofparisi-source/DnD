@@ -47,7 +47,7 @@ Target devices: Android (Redmi 15, Chrome) and Windows 10/11 (Edge/Chrome). READ
 - `js/data/equipment.js`: `WEAPONS` and `ARMOR` catalogs (armor has `str` and `stealth`) (SRD 5.2.1 tables, checked). Picking one in the Equipment tab prefills the item.
 - `css/styles.css`: one file. Design tokens come first and are the single source of truth: colors (`--bg`, `--card`, `--ink*`, `--brass*`, `--ember*`, `--blueprint`...) in `:root` (dark, default) and `:root[data-theme="light"]` (paper); space `--s-*`, radius `--r-*`, type `--fs-*`, shadow, motion. Use tokens, not literals. "Artificer's Field Journal" look: blueprint grid, riveted cards, brass plates, ember only for active/magic/condition states. No raster textures: gradients and inline SVG only. Fonts are self-hosted via `@font-face`.
 - `fonts/`: latin woff2 subsets: Source Sans 3 (variable, body/UI) and IM Fell English SC (display: h1/h2 only), OFL licenses in `OFL-*.txt`. Both woff2 files are in `sw.js` `ASSETS`; the body font is preloaded in `index.html`.
-- `sw.js`: offline cache. `manifest.webmanifest` + `icons/`: install metadata.
+- `sw.js`: offline cache. `js/version.js`: `APP_VERSION` (shown in Campaign & data > About). `manifest.webmanifest` + `icons/` (192, 512, `icon-maskable-512.png` with safe-zone padding): install metadata.
 
 ## State and data
 - One state object (`version`, `character`, `campaign`, `sessions`, `journal`, `ui`).  `ui` defaults: `tab` 'combat' (new users), `theme` 'dark', `sub`, `haptics` true (vibration toggle in Character > Campaign & data), `trackWeight` true (Equipment page switch: hides weight fields and the carried counter), `drive` `{connected, folderId, fileId, lastSyncAt, lastRemoteModified, syncedHash, backupDay, needsConfirm}` (local-only Drive metadata: not in the Drive file or in `backupFile()`, kept on import/restore/Drive download, reset by Delete everything). `character.concentration` is `{ id, name }` (empty name = none). It's saved as JSON in localStorage under the key `dnd-companion-v1`. Don't rename the key: existing devices would lose their data.
@@ -78,13 +78,14 @@ Target devices: Android (Redmi 15, Chrome) and Windows 10/11 (Edge/Chrome). READ
 - **Never store the token** (not in localStorage, state, backups or the Drive file). Only https googleapis URLs; validate downloads with `isBackup()` before `normalize()`.
 - Tests: no real Google account. Playwright stubs `window.google.accounts.oauth2` (`initTokenClient`/`revoke`) via `addInitScript`, routes `accounts.google.com` to an empty script and `https://www.googleapis.com/**` (including OPTIONS preflight) to an in-memory fake Drive. Hooks read only if present: `window.__driveDebounceMs`, `__driveBackoffMs`, `__driveSignInTimeoutMs`, `__drivePendingVisMs`, `__driveGsiTimeoutMs`.
 - Sign-in is two taps when Google's script is not loaded yet (first tap prepares, button becomes "Sign in with Google" / "Sign in to sync"; `requestAccessToken()` is called synchronously in the second tap's handler, never after an await). Tests record that in the stub (`__ratLog`).
-- Unverified in real use: the sign-in pop-up inside the installed Android app, silent renewal of the pass, the 7-day re-consent in testing mode.
+- The sign-in pop-up was confirmed working by the user on 2026-11-10 (device not specified). Unverified in real use: silent renewal of the pass, the 7-day re-consent in testing mode.
 
 - After a backup import or snapshot restore `ui.drive.needsConfirm` blocks auto upload; the next tap asks, saves the remote as `dnd-slop-before-import-*` first, then uploads. A sign-in left pending is rejected after 120 s or when the page becomes visible again after 5 s; Disconnect works even while busy. Downloads with `version` newer than `SCHEMA_VERSION` are refused.
 
 ## Service worker rules
 - `sw.js` is network-first: online users get new files without a bump. Offline users and freshly installed apps get the cached copy.
-- The browser only reinstalls the worker when `sw.js` itself changes. So **bump `CACHE` (`ledger-vN`) whenever any cached asset changes**. That refreshes the precache and deletes old caches.
+- The browser only reinstalls the worker when `sw.js` itself changes. So **bump `CACHE` (`ledger-vN`) whenever any cached asset changes, and bump `APP_VERSION` in `js/version.js` to the same value in the same commit**. That refreshes the precache and deletes old caches.
+- Install precaches with `cache.addAll` of `Request(url, {cache: 'reload'})` (atomic: a failed file means no half-updated set). The worker still does skipWaiting + claim; app.js shows a persistent "DnD Slop was updated / Reload" banner (`showUpdateBanner`, `#update-banner`) on `controllerchange`, only if the page already had a controller (not on first install). It never reloads on its own, is hidden while a sheet is open (CSS), and Reload calls `save(state)` (not `saveNow()`, which would release the unreadable-data hold). Returning to the app triggers `registration.update()` at most every 30 min.
 - Add every new file the app loads to `ASSETS`, or it won't be available offline.
 
 ## Rules-accuracy policy
@@ -94,6 +95,12 @@ Target devices: Android (Redmi 15, Chrome) and Windows 10/11 (Edge/Chrome). READ
 - Still unverified (community transcriptions: dnd2024.wikidot.com, rpgbot.net, dungeonmister.com): Xanathar's spells and racial feats, PHB 2024 feats that are not in the SRD, the 2024 Summon Construct text, plan attunement values for tiers 2/6 (unreadable in the scan), Magic Item Adept's 4 attunements (text unreadable), the species words used for racial-feat checks (e.g. Khoravar as half-elf), the Medium Armor Master DEX 16 condition, the source books of the 7 `extra` spells (Arcana Unleashed / D&D Beyond Drops). Never call these verified, in code, UI text, docs or replies.
 - Text from the official SRD 5.2.1 may be used verbatim (CC-BY-4.0): keep the attribution in spell-details.js, README and the app's Credits. **Never copy text from the books** (PHB, Tasha's, Xanathar's, Forge of the Artificer) or from wikidot transcriptions of them, and never commit the books or their scans: the repo and site are public. Non-SRD content stays in short own-words summaries; full text belongs in the user's notes fields.
 - When the user's book disagrees, the book wins: fix the data entry and mention it.
+
+## Accessibility, performance, Selected page
+- Skeleton: `.skip` link (index.html, before `#view`) -> `<main id="main" tabindex="-1">` (holds drive strip, status strip, sub-tabs and `<div id="panel" role="tabpanel">`; the main landmark must not carry another role). `.dock` is `role="region"`. One `h1`; use `.sr-only` headings where a level would be skipped. `aria-label` must contain the visible text (axe label-content-name-mismatch). The Drive strip message is a live region except on the Data tab (the card has its own).
+- axe-core check (kept outside the repo): `npm install axe-core` in a scratch dir, `page.addScriptTag({path: .../axe.min.js})`, run on every page, sub-tab and sheet kind at 412px, dark and light. Measured on 2026-11-10 in headless emulation (Pixel 7, CPU x4): 0 violations (before: serious label-content-name-mismatch x6 types, region/landmark-one-main/aria-allowed-role/heading-order).
+- Perf (measured on 2026-11-10 in headless emulation, Pixel 7, CPU x4; not real-device numbers): repeat visit FCP about 110 ms; tab switches 30-70 ms median (Journal NPCs with 200 entries about 66, All spells about 56 after `content-visibility: auto` on `.spell-card` and feat rows); CLS 0.02 on first visit (about 245 KB JS uncompressed). `modulepreload` was tried and dropped (first-visit FCP +360 ms, LCP only -190 ms).
+- Character > Selected (`tabSelected()`) is a read-only overview (AC/Prof/DC, concentration, conditions, spells by level, plans, equipped/attuned, feats, skills with modifiers); each card's Open button (`selOpen`) goes to the editing page (Spells opens "My spells"). Don't add editing there.
 
 ## Conventions seen in the code
 - No frameworks. Views are template-string functions returning HTML. Re-rendering replaces `#view.innerHTML`, and `render()` restores focus and scroll.
@@ -111,6 +118,7 @@ Target devices: Android (Redmi 15, Chrome) and Windows 10/11 (Edge/Chrome). READ
 - Naming: camelCase JavaScript, kebab-case CSS classes, 2-space indent, single quotes, semicolons.
 
 ## Known weak spots
+- With network-first + skipWaiting, an open page can lazy-import a newer `spell-details.js` / `drive.js` than its running `app.js` until it reloads; the update banner (and the 30-minute `registration.update()` on return to the app) mitigates it.
 - `js/app.js` is large (about 3150 lines) and mixes views, logic and actions. Splitting it (e.g. one module per tab) is reasonable, but **only do it when the user asks**.
 - No automated tests in the repo; checks are manual or ad-hoc Playwright.
 - Data lives per device and browser; the only sync is the optional Google Drive mirror (otherwise export/import).

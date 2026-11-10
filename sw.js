@@ -1,14 +1,15 @@
 // Offline support: network first (so updates show up right away), falling back to the cached copy.
-const CACHE = 'ledger-v14';
+// Keep CACHE in sync with APP_VERSION in js/version.js: bump both together.
+const CACHE = 'ledger-v15';
 const ASSETS = [
-  './', './index.html', './css/styles.css', './js/app.js', './js/rules.js', './js/store.js', './js/drive.js',
+  './', './index.html', './css/styles.css', './js/app.js', './js/rules.js', './js/store.js', './js/drive.js', './js/version.js',
   './js/data/artificer.js', './js/data/spells.js', './js/data/spell-details.js', './js/data/plans.js', './js/data/feats.js', './js/data/equipment.js',
-  './manifest.webmanifest', './icons/icon.svg', './icons/icon-180.png', './icons/icon-192.png', './icons/icon-512.png',
+  './manifest.webmanifest', './icons/icon.svg', './icons/icon-180.png', './icons/icon-192.png', './icons/icon-512.png', './icons/icon-maskable-512.png',
   './fonts/source-sans-3-latin-wght-normal.woff2', './fonts/im-fell-english-sc-latin-400-normal.woff2',
 ];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS.map((u) => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (e) => {
