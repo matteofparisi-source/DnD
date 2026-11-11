@@ -537,6 +537,7 @@ body.sheet-open #update-banner { display: none; }
 .sd-long dd p:first-child { margin-top: 2px; }
 .spell-desc p { margin: var(--s-2) 0 0; font-size: var(--fs-sm); overflow-wrap: anywhere; }
 .sd-src { font-size: var(--fs-sm) !important; }
+.src-link { display: inline-flex; align-items: center; min-height: var(--hit); min-width: var(--hit); justify-content: center; padding: 0 var(--s-2); color: var(--blueprint); font-size: var(--fs-sm); text-decoration: underline; text-underline-offset: 3px; }
 .sd-src a, .credits a, #drive a { display: inline-flex; align-items: center; min-height: var(--hit); padding: 0 var(--s-1); color: var(--blueprint); overflow-wrap: anywhere; }
 .credits p { font-size: var(--fs-sm); overflow-wrap: anywhere; }
 .sd-note { font-style: italic; color: var(--warn); font-size: var(--fs-sm) !important; }

@@ -155,6 +155,17 @@ export async function run(t) {
   t.ok(st.save({ version: 4 }) === true, 'save() retries after dropping snapshots on a quota error');
   t.eq(reasons(), ['important:imp'], 'save() dropped daily and rest first, kept the important one');
   fail.count = -1; t.ok(st.save({ version: 4 }) === false, 'save() returns false when nothing helps'); fail.key = null; fail.count = 0;
+  // Source links: one https link per spell, feat and plan, no stale keys
+  {
+    const { SOURCE_LINKS, CLASS_LINK, SUBCLASS_LINK } = await imp('js/data/sources.js');
+    const { SPELLS } = await imp('js/data/spells.js'); const { FEATS } = await imp('js/data/feats.js'); const { PLANS } = await imp('js/data/plans.js');
+    for (const [kind, list] of [['spell', SPELLS], ['feat', FEATS], ['plan', PLANS]]) {
+      const ids = list.map((x) => x.id);
+      t.eq(ids.filter((i) => !/^https:\/\//.test(SOURCE_LINKS[kind][i] || '')), [], `every ${kind} id has an https SOURCE_LINKS entry`);
+      t.eq(Object.keys(SOURCE_LINKS[kind]).filter((k) => !ids.includes(k)), [], `no stale ${kind} keys in SOURCE_LINKS`);
+    }
+    t.ok(/^https:\/\//.test(CLASS_LINK) && /^https:\/\//.test(SUBCLASS_LINK), 'class and subclass links are https');
+  }
   // unreadable data is preserved, not overwritten
   mem.clear(); mem.set('dnd-companion-v1', '{"broken');
   const ld = st.load();

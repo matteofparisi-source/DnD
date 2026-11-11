@@ -5,6 +5,7 @@ import {
 } from './data/artificer.js';
 import { SPELLS, SOURCE_LABEL, SCHOOLS, slug } from './data/spells.js';
 import { APP_VERSION } from './version.js';
+import { SOURCE_LINKS, CLASS_LINK, SUBCLASS_LINK } from './data/sources.js';
 import { PLANS, PLAN_TYPES, TIERS } from './data/plans.js';
 import { FEATS, FEAT_CATEGORIES, FEAT_SOURCES } from './data/feats.js';
 import { WEAPONS, ARMOR } from './data/equipment.js';
@@ -531,10 +532,10 @@ function tabStats() {
     const key = `ft${FEATURES.indexOf(f)}`;
     const u = f.uses && usesMax(f.uses) ? `<div class="row tight feat-uses">${pips(`character.uses.${f.uses}`, usesMax(f.uses), num(c.uses[f.uses]), f.name)}<small class="muted">${esc(USES[f.uses].name)}</small></div>` : '';
     return `<div class="feature">
-      <details data-block="${key}" ${openBlocks.has(key) ? 'open' : ''}><summary><span class="lvl">L${f.lvl}</span><b class="grow">${esc(f.name)}</b></summary><p>${esc(f.text)}</p></details>${u}</div>`;
+      <details data-block="${key}" ${openBlocks.has(key) ? 'open' : ''}><summary><span class="lvl">L${f.lvl}</span><b class="grow">${esc(f.name)}</b></summary><p>${esc(f.text)}</p></details><div class="row tight">${srcLink(f.sub ? SUBCLASS_LINK : CLASS_LINK, f.name)}</div>${u}</div>`;
   };
   const feats = haveF.map(featRow).join('');
-  const upcoming = nextF.length ? `<details class="upcoming" data-block="upcoming" ${openBlocks.has('upcoming') ? 'open' : ''}><summary>Upcoming features (${nextF.length})</summary>${nextF.map((f) => `<div class="up"><div class="row tight"><span class="lvl">L${f.lvl}</span><b>${esc(f.name)}</b></div><p>${esc(f.text)}</p></div>`).join('')}</details>` : '';
+  const upcoming = nextF.length ? `<details class="upcoming" data-block="upcoming" ${openBlocks.has('upcoming') ? 'open' : ''}><summary>Upcoming features (${nextF.length})</summary>${nextF.map((f) => `<div class="up"><div class="row tight"><span class="lvl">L${f.lvl}</span><b>${esc(f.name)}</b></div><p>${esc(f.text)}</p>${srcLink(f.sub ? SUBCLASS_LINK : CLASS_LINK, f.name)}</div>`).join('')}</details>` : '';
 
   return `
   <section class="card">
@@ -852,6 +853,11 @@ function castInfo(s) {
   };
 }
 // Body of a spell card: built only when its <details> is opened.
+// Small "Source" link to a community wiki (unofficial, link only). Returns '' when there is no URL.
+function srcLink(url, name) {
+  if (!url) return '';
+  return `<a class="src-link" href="${esc(url)}" target="_blank" rel="noopener noreferrer" aria-label="Source: ${esc(name)} (community wiki, opens in new tab)">Source</a>`;
+}
 function spellBody(s) {
   const d = det(s.id);
   const note = spellStatus(s) !== 'none' ? `<input class="note" data-bind="character.spellNotes.${esc(s.id)}" value="${esc(C().spellNotes[s.id] || '')}" placeholder="Your notes (range, damage, reminders)" aria-label="Your notes for ${esc(s.name)}">` : '';
@@ -865,9 +871,9 @@ function spellBody(s) {
     ? `<span class="tag-s ok">SRD 5.2.1 · official text</span> <span class="muted">${esc(d.source)}</span>`
     : /\(user's copy\)/.test(d.source)
     ? `<span class="tag-s ok">Checked against your book</span> <span class="muted">${esc(d.source)}</span>`
-    : `<span class="tag-s warn">Community source · unverified</span> ${url ? `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(url.replace(/^https?:\/\//, ''))}</a>` : `<span class="muted">${esc(d.source)}</span>`}`;
+    : `<span class="tag-s warn">Community source · unverified</span> ${url ? '' : `<span class="muted">${esc(d.source)}</span>`}`;
   return `<dl class="sd-list">${row('Casting Time', d.time)}${row('Range', d.range)}${row('Components', d.components)}${row('Duration', d.duration)}${long('Description', d.desc)}${higher ? long('At Higher Levels', higher) : ''}</dl>
-    <p class="sd-src">${src}</p>
+    <p class="sd-src">${src} ${srcLink(SOURCE_LINKS.spell[s.id], s.name)}</p>
     ${d.note ? `<p class="sd-note">${esc(d.note)}</p>` : ''}${note}`;
 }
 function spellCard(s) {
@@ -998,6 +1004,7 @@ function planCard(p) {
       <span class="tag-s">${esc(p.type)}</span>
       ${p.attune === true ? '<span class="tag-s c">Attunement</span>' : p.attune === false ? '<span class="tag-s">No attunement</span>' : '<span class="tag-s">Attunement varies</span>'}
       ${p.custom ? `<span class="tag-s src">${esc(p.base)}</span>` : ''}
+      ${srcLink(SOURCE_LINKS.plan[p.id], p.name)}
       ${made ? `<span class="tag-s r">${made} made</span>` : ''}
     </div>
   </div>`;
@@ -1156,6 +1163,7 @@ function itemCard(i, kind) {
       ${i.type === 'Armor' && i.armor.stealth ? '<span class="tag-s c">Stealth disadv.</span>' : ''}
       ${i.rarity === 'Mundane' ? '' : `<span class="tag-s src">${esc(i.rarity)}</span>`}
       ${kind === 'magic' ? `<span class="tag-s src">${esc(ORIGINS.find((o) => o[0] === i.origin)?.[1] || i.origin)}</span>` : ''}
+      ${i.planId ? srcLink(SOURCE_LINKS.plan[i.planId], i.name || 'plan') : ''}
       ${charges}
     </div>
     <div class="icard-tog">
@@ -1294,6 +1302,7 @@ function featsList() {
         ${taken.length ? `<span class="flag prepared">Taken${taken.length > 1 ? ` ×${taken.length}` : ''}</span>` : ''}
         <span class="tag-s">${esc(ft.cat)}</span>
         <span class="tag-s src">${esc(ft.src)}</span>
+        ${srcLink(SOURCE_LINKS.feat[ft.id], ft.name)}
         <span class="tag-s ${ok ? 'r' : 'c'}">${ok ? 'Prerequisites met' : 'Prerequisite'}: ${esc(reqText(ft))}</span>
       </div>
       ${ft.sum ? `<p class="sum">${esc(ft.sum)}</p>` : ''}

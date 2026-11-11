@@ -39,8 +39,11 @@ export async function run(env, t) {
   await p.click('[data-action="filter"][data-page="plans"][data-key="view"][data-val="all"]');
   await p.selectOption('[data-filter="plans.type"]', 'Ring');
   t.ok(await p.locator('#list .item').count() > 3, 'type filter narrows to rings');
+  const { SOURCE_LINKS } = await imp('js/data/sources.js');
+  t.ok(await p.locator('#list .item a.src-link[target="_blank"][rel~="noopener"]').count() >= 3, 'plan cards have Source links');
   await go(p, 'workshop', 'items');
   t.ok((await p.locator('.icard-name').allTextContents()).includes('Wand of the War Mage +1'), 'crafted item appears in Magic items');
+  t.eq(await p.getAttribute('.icard:has-text("Wand of the War Mage") a.src-link', 'href'), SOURCE_LINKS.plan['2-wand-of-the-war-mage-1'], 'crafted item Source link points to its plan');
   await p.click('.icard:has-text("Wand of the War Mage") [data-action="toggleAttune"]');
   t.ok((await p.textContent('.counter')).includes('1 / 3'), 'attuning the crafted item counts 1 / 3');
   await p.ctx.close();
@@ -63,6 +66,8 @@ export async function run(env, t) {
   // Feats
   p = await openPage(env, t, { tab: 'feats' });
   await go(p, 'character', 'feats');
+  t.ok(await p.locator('#list .item a.src-link[target="_blank"]').count() > 5, 'feat rows have Source links');
+  t.eq(await p.locator('#list .item a.src-link').first().textContent(), 'Source', 'feat link text is Source');
   const cards = await p.$$eval('#list .item', (els) => els.map((e) => ({ met: /Prerequisites met/.test(e.textContent), taken: /Taken/.test(e.querySelector('.flag')?.textContent || '') })));
   t.ok(cards.length > 5 && cards.every((c) => c.met && !c.taken), `default view: ${cards.length} feats, all prerequisites met and untaken`);
   t.ok(/Your feats \(0\)/.test(await p.textContent('.yourfeats')), 'summary row shows 0 taken');

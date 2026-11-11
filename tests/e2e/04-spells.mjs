@@ -26,6 +26,22 @@ export async function run(env, t) {
   await p.click('[data-spell="web"] > summary');
   await p.waitForSelector('[data-spell="web"] .sd-list');
   t.ok(await p.locator('[data-spell="web"] .sd-list').count() === 1 && /Dexterity|Web/.test(await p.textContent('[data-spell="web"] .sd-list')), 'opening a card builds its details');
+  // Source link (inside the open card, not in <summary>: nested-interactive): href/target, no navigation in this tab
+  const srcA = p.locator('[data-spell="web"] .sd-src a.src-link');
+  const { SOURCE_LINKS } = await imp('js/data/sources.js');
+  t.eq(await srcA.count(), 1, 'open spell card has one Source link');
+  t.eq(await srcA.textContent(), 'Source', 'link text is "Source"');
+  t.eq(await srcA.getAttribute('href'), SOURCE_LINKS.spell.web, 'Source href matches SOURCE_LINKS');
+  t.eq(await srcA.getAttribute('target'), '_blank', 'Source opens in a new tab');
+  t.ok(/^Source/.test(await srcA.getAttribute('aria-label')), 'aria-label starts with the visible text');
+  t.ok((await srcA.boundingBox()).height >= 44, 'Source tap target is at least 44px tall');
+  await p.ctx.route('https://dnd2024.wikidot.com/**', (r) => r.fulfill({ status: 200, contentType: 'text/html', body: '<title>stub</title>' }));
+  const url0 = p.url();
+  const [pop] = await Promise.all([p.waitForEvent('popup', { timeout: 5000 }).catch(() => null), srcA.click()]);
+  if (pop) await pop.close();
+  t.eq(await p.locator('[data-spell="web"][open]').count(), 1, 'clicking Source keeps the card open');
+  t.eq(await p.locator('#list summary a').count(), 0, 'no links inside spell summaries');
+  t.eq(p.url(), url0, 'clicking Source keeps this tab on the app');
   t.eq(await p.locator('#list .sd-list').count(), 1, 'only the opened card has description DOM');
   await p.click('[data-spell="web"] > summary');
   await p.waitForSelector('[data-spell="web"] .sd-list', { state: 'detached' });
