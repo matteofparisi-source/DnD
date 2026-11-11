@@ -24,7 +24,7 @@ export const PLANS = [
   P(6, 'Boots of Elvenkind', 'Wondrous', false),
   P(6, 'Boots of the Winding Path', 'Wondrous', true),
   P(6, 'Cloak of Elvenkind', 'Wondrous', true),
-  P(6, 'Cloak of the Manta Ray', 'Wondrous', false),
+  P(6, 'Cloak of the Manta Ray', 'Wondrous', true),
   P(6, 'Dazzling Weapon', 'Weapon', true),
   P(6, 'Eyes of Charming', 'Wondrous', true),
   P(6, 'Eyes of Minute Seeing', 'Wondrous', false),

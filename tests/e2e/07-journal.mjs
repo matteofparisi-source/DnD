@@ -115,7 +115,7 @@ export async function run(env, t) {
   t.ok(true, 'quest steps: add -> 1/3, toggle -> 2/3, remove -> 2/2');
 
   await p.fill('#jsearch', 'noble');
-  await p.waitForSelector('.jres button');
+  await p.waitForFunction(() => document.querySelectorAll('.jres button').length === 1 && /Baron Gareth/.test(document.querySelector('.jres').textContent), null, { timeout: 5000 }).catch(() => {});
   t.ok(await p.locator('.jres button').count() === 1 && /Baron Gareth/.test(await p.textContent('.jres')), 'global search finds an NPC by tag');
   await p.fill('#jsearch', 'sharn');
   await p.waitForFunction(() => document.querySelectorAll('#jbody h3').length >= 2);

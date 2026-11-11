@@ -27,7 +27,7 @@ export const newFaction = (f = {}) => entry({ name: '', attitude: 'unknown', goa
 export const newQuest = (f = {}) => entry({ title: '', status: 'active', giver: '', reward: '', steps: [], ...f });
 export const cleanTag = (t) => String(t ?? '').trim().toLowerCase().replace(/\s+/g, ' ').slice(0, 40);
 export function newItem(fields = {}) {
-  const it = { id: uid(), name: '', origin: 'found', planId: '', type: 'Wondrous', rarity: 'Uncommon', needsAttune: false, attuned: false, equipped: false, charges: 0, chargesMax: 0, notes: '', qty: 1, weight: 0, acBonus: 0, effects: [], ...fields };
+  const it = { id: uid(), name: '', origin: 'found', planId: '', type: 'Wondrous', rarity: 'Uncommon', needsAttune: false, attuned: false, equipped: false, charges: 0, chargesMax: 0, notes: '', qty: 1, weight: 0, acBonus: 0, effects: [], catalogId: '', fxSrc: '', ...fields };
   ensureItemData(it);
   return it;
 }
@@ -152,7 +152,11 @@ function normalizeV4(s, data) {
 // ----- schema v5: effects. Items and taken feats carry effect lists, taken feats carry choices, character.buffs lists switched-on spells.
 // Abilities stay as they were (they are the base scores now). Coerces everything, so it is safe to run again.
 function normalizeV5(c) {
-  for (const it of c.items) { it.effects = cleanEffects(it.effects); fixIds(it.effects); }
+  for (const it of c.items) {
+    it.effects = cleanEffects(it.effects); fixIds(it.effects);
+    it.catalogId = typeof it.catalogId === 'string' ? it.catalogId.slice(0, 80) : ''; // where catalog effects came from ('plan:<id>' | 'item:<id>'); empty = not applied
+    it.fxSrc = it.fxSrc === 'community' || it.fxSrc === 'SRD 5.2.1' ? it.fxSrc : '';
+  }
   c.feats = (Array.isArray(c.feats) ? c.feats : []).filter(isObj);
   for (const f of c.feats) {
     f.effects = cleanEffects(f.effects); fixIds(f.effects);

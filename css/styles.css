@@ -818,7 +818,8 @@ button.big { min-height: 52px; font-size: var(--fs-md); }
 .icard-name { font-size: var(--fs-md); overflow-wrap: anywhere; min-width: 0; }
 .qty { display: inline-flex; align-items: center; gap: var(--s-1); flex: 0 0 auto; }
 .qty-n { min-width: 2ch; text-align: center; font-size: var(--fs-lg); font-variant-numeric: tabular-nums; }
-.icard-tog { display: flex; gap: var(--s-2); margin: var(--s-2) 0; }
+.icard-tog { display: flex; flex-wrap: wrap; gap: var(--s-2); margin: var(--s-2) 0; }
+.sheet-list { display: flex; flex-direction: column; gap: var(--s-2); margin: var(--s-2) 0; }
 .tog { flex: 1 1 0; gap: var(--s-2); }
 .tog::before { content: ""; width: 18px; height: 18px; flex: 0 0 auto; border-radius: 50%; border: 2px solid currentColor; }
 .tog[aria-pressed="true"] { background: var(--ember); border-color: var(--ember); color: var(--on-ember); box-shadow: 0 0 10px -2px var(--ember-glow); }

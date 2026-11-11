@@ -1,9 +1,9 @@
 // Offline support: network first (so updates show up right away), falling back to the cached copy.
 // Keep CACHE in sync with APP_VERSION in js/version.js: bump both together.
-const CACHE = 'ledger-v18';
+const CACHE = 'ledger-v19';
 const ASSETS = [
   './', './index.html', './css/styles.css', './js/app.js', './js/rules.js', './js/store.js', './js/drive.js', './js/version.js',
-  './js/data/artificer.js', './js/data/spells.js', './js/data/spell-details.js', './js/data/plans.js', './js/data/sources.js', './js/data/feats.js', './js/data/equipment.js', './js/effects.js', './js/data/spell-fx.js', './js/data/feat-fx.js', './js/data/feat-spells.js', './js/data/feat-spell-details.js',
+  './js/data/artificer.js', './js/data/spells.js', './js/data/spell-details.js', './js/data/plans.js', './js/data/sources.js', './js/data/feats.js', './js/data/equipment.js', './js/effects.js', './js/data/spell-fx.js', './js/data/feat-fx.js', './js/data/item-fx.js', './js/data/feat-spells.js', './js/data/feat-spell-details.js',
   './manifest.webmanifest', './icons/icon.svg', './icons/icon-180.png', './icons/icon-192.png', './icons/icon-512.png', './icons/icon-maskable-512.png',
   './fonts/source-sans-3-latin-wght-normal.woff2', './fonts/im-fell-english-sc-latin-400-normal.woff2',
 ];

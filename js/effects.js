@@ -24,8 +24,11 @@ export const EFFECT_META = {
   saveProf: { label: 'Saving throw proficiency', target: AB, def: { target: 'wis' } },
   skillProf: { label: 'Skill proficiency', target: SK, def: { target: 'perception' } },
   skillExpert: { label: 'Skill expertise', target: SK, def: { target: 'perception' } },
+  skillBonus: { label: 'Skill check bonus', target: SK, value: 'num', lo: -20, hi: 20, def: { target: 'perception', value: 1 } },
+  pb: { label: 'Proficiency Bonus bonus', value: 'num', lo: -5, hi: 10, def: { value: 1 } },
   init: { label: 'Initiative bonus', value: 'numpb', lo: -20, hi: 20, def: { value: 1 } },
   speed: { label: 'Speed bonus (ft)', value: 'num', lo: -300, hi: 300, def: { value: 10 } },
+  speedMin: { label: 'Speed is at least (ft)', value: 'num', lo: 0, hi: 300, def: { value: 30 } },
   speedMult: { label: 'Speed multiplier', value: 'num', lo: 0, hi: 10, def: { value: 2 } },
   speedMode: { label: 'Other speed (fly, swim, climb)', target: MODES, value: 'nummode', lo: 0, hi: 600, def: { target: 'fly', value: 'walk' } },
   hp: { label: 'Max HP bonus', value: 'num', lo: -500, hi: 500, perLevel: true, def: { value: 5 } },
@@ -129,8 +132,8 @@ export function resolveChoices(effects, choices = {}) {
   }
   return out;
 }
-// How many picks a choice asks for (n may be 'pb' = your Proficiency Bonus) and which values it offers (null = free text, e.g. a tool name).
-export const choiceCount = (ch, level = 1) => (ch.n === 'pb' ? profBonus(level) : Math.max(1, Number(ch.n) || 1));
+// How many picks a choice asks for (n may be 'pb' = your effective Proficiency Bonus, passed in) and which values it offers (null = free text, e.g. a tool name).
+export const choiceCount = (ch, pb = 2) => (ch.n === 'pb' ? Math.max(1, pb) : Math.max(1, Number(ch.n) || 1)); // pb: the effective Proficiency Bonus (FX().pb)
 export function choiceOptions(ch, choices = {}, pools = {}) {
   if (ch.dependsOn && ch.optionsBy) {
     const src = ch.optionsBy[[].concat(choices?.[ch.dependsOn] ?? [])[0]];
@@ -158,6 +161,9 @@ export function describeEffect(e, nameOf = (id) => id) {
     case 'skillProf': return `Proficiency: ${SKILL_NAME[e.target] || e.target}${e.orExpert ? ' (Expertise if already proficient)' : ''}`;
     case 'skillExpert': return `Expertise: ${SKILL_NAME[e.target] || e.target}`;
     case 'init': return `Initiative ${e.value === 'pb' ? '+ Proficiency Bonus' : sgn(e.value)}`;
+    case 'skillBonus': return `${SKILL_NAME[e.target] || e.target} checks ${sgn(e.value)}`;
+    case 'pb': return `Proficiency Bonus ${sgn(e.value)}`;
+    case 'speedMin': return `Speed is at least ${e.value} ft`;
     case 'speed': return `Speed ${sgn(e.value)} ft`;
     case 'speedMult': return `Speed ×${e.value}`;
     case 'speedMode': return `${e.target[0].toUpperCase()}${e.target.slice(1)} speed ${e.value === 'walk' ? 'equal to your Speed' : `${e.value} ft`}`;
@@ -193,7 +199,7 @@ export function collect(state, cat = {}) {
   }
   for (const it of Array.isArray(c.items) ? c.items : []) {
     if (!isObj(it) || !it.equipped || (it.needsAttune && !it.attuned)) continue; // worn, and attuned when the item needs it
-    const src = { kind: 'item', id: str(it.id), name: str(it.name) || 'Item', fxSrc: '' };
+    const src = { kind: 'item', id: str(it.id), name: str(it.name) || 'Item', fxSrc: it.fxSrc === 'community' ? 'community' : '' };
     add(it.effects, src);
     if (nm(it.acBonus)) add([{ type: 'ac', value: it.acBonus }], src);
   }
@@ -239,8 +245,9 @@ const NOTE = { feat: 'feat', item: 'item', spell: 'spell', manual: '' };
 export function createFx(c, cat = {}) {
   const list = collect({ character: c }, cat);
   const level = Math.max(1, Math.min(20, Number(c.level) || 1));
-  const pb = profBonus(level);
   const of = (type, pred) => list.filter((e) => e.type === type && (!pred || pred(e)));
+  const pbEffects = of('pb'); // Proficiency Bonus effects (Ioun Stone of Mastery): every use of the bonus below includes them
+  const pb = profBonus(level) + pbEffects.reduce((sum, e) => sum + nm(e.value), 0);
   const noteOf = (e, extra = '') => [NOTE[e.src.kind], e.src.fxSrc === 'community' ? 'unverified' : '', extra].filter(Boolean).join(', ');
   const eff = (e, value = nm(e.value), extra = '') => part(e.src.name, value, noteOf(e, extra));
 
@@ -274,7 +281,7 @@ export function createFx(c, cat = {}) {
   const save = (a) => {
     const parts = [part(`${short(a)} modifier`, am(a))];
     const eProf = of('saveProf', (e) => e.target === a)[0];
-    if (c.saveProf?.[a]) parts.push(part('Proficiency', pb));
+    if (c.saveProf?.[a]) parts.push(pbPart());
     else if (eProf) parts.push(part(eProf.src.name, pb, noteOf(eProf, 'proficiency')));
     for (const e of of('save', (x) => x.target === 'all' || x.target === a)) parts.push(eff(e));
     return finish(parts);
@@ -294,6 +301,7 @@ export function createFx(c, cat = {}) {
     const parts = [part(`${short(ab)} modifier`, am(ab))];
     const { stored, level: lvl, from } = skillInfo(key);
     if (lvl > 0) parts.push(from ? part(from.src.name, pb * lvl, noteOf(from, lvl === 2 ? 'expertise' : 'proficiency')) : part(stored === 2 ? 'Expertise (double Proficiency)' : 'Proficiency', pb * lvl));
+    for (const e of of('skillBonus', (x) => x.target === key)) parts.push(eff(e));
     return finish(parts);
   };
   const init = () => finish([part('DEX modifier', am('dex')), ...of('init').map((e) => (e.value === 'pb' ? eff(e, pb, 'Proficiency Bonus') : eff(e)))]);
@@ -301,6 +309,7 @@ export function createFx(c, cat = {}) {
     const parts = [part('Base', nm(c.speed))];
     for (const e of of('speed')) parts.push(eff(e));
     let total = parts.reduce((s, p) => s + p.value, 0);
+    for (const e of of('speedMin')) { const n = nm(e.value); if (n > total) { parts.push(eff(e, n - total, `raises Speed to ${n}`)); total = n; } }
     for (const e of of('speedMult')) { const m = nm(e.value); parts.push(eff(e, total * m - total, `×${m}`)); total *= m; }
     return finish(parts);
   };
@@ -326,8 +335,8 @@ export function createFx(c, cat = {}) {
     }
     return finish(parts);
   };
-  const dc = (a = 'int') => finish([part('Base', 8), part('Proficiency', pb), part(`${short(a)} modifier`, am(a)), ...of('spellDC').map((e) => eff(e))]);
-  const satk = (a = 'int') => finish([part('Proficiency', pb), part(`${short(a)} modifier`, am(a)), ...of('spellAttack').map((e) => eff(e))]);
+  const dc = (a = 'int') => finish([part('Base', 8), pbPart(), part(`${short(a)} modifier`, am(a)), ...of('spellDC').map((e) => eff(e))]);
+  const satk = (a = 'int') => finish([pbPart(), part(`${short(a)} modifier`, am(a)), ...of('spellAttack').map((e) => eff(e))]);
 
   // Spells that taken feats grant: [{ id, always, known, free: '' | 'long' | 'short' | 'atWill', freeCount, ability, cantrip, mods, entry, feat, fxSrc }].
   const grants = () => of('spell').filter((e) => e.target).map((e) => ({
@@ -350,6 +359,8 @@ export function createFx(c, cat = {}) {
     return out;
   };
   const expanded = () => expandedSpells(c, cat);
+  const pbPart = () => part('Proficiency', pb, pbEffects.length ? `includes ${[...new Set(pbEffects.map((e) => e.src.name))].join(', ')}` : '');
+  const pbBreak = () => finish([part(`Level ${level}`, profBonus(level)), ...pbEffects.map((e) => eff(e))]);
   const passive = () => finish([part('Base', 10), ...skill('perception').parts]);
   // Armor Class: the caller supplies the armor/DEX/shield parts; ac effects (and the manual bonus) are added when their condition holds.
   const ac = (base, ctx = {}) => {
@@ -378,7 +389,7 @@ export function createFx(c, cat = {}) {
     return l;
   };
 
-  // key: abil:<a> | mod:<a> | save:<a> | skill:<k> | init | speed | hpmax | dc | satk | passive   (AC: pass the parts through ac())
+  // key: abil:<a> | mod:<a> | save:<a> | skill:<k> | init | speed | hpmax | dc | satk | passive | pb   (AC: pass the parts through ac())
   const breakdown = (key) => {
     const [kind, arg] = String(key).split(':');
     switch (kind) {
@@ -392,6 +403,7 @@ export function createFx(c, cat = {}) {
       case 'dc': return dc();
       case 'satk': return satk();
       case 'passive': return passive();
+      case 'pb': return pbBreak();
       default: return { total: 0, parts: [] };
     }
   };

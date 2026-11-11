@@ -350,6 +350,54 @@ export async function run(t) {
     const n = normalize({ version: 5, character: { feats: [{ id: 'a', featId: 'skilled', choices: { skills: ['arcana', 7, 'x'.repeat(200)], asi: 'int', bad: 5 } }] } }).character.feats[0].choices;
     t.ok(n.asi === 'int' && n.skills.length === 2 && n.skills[1].length === 80 && !('bad' in n), 'feat choices are cleaned by normalize');
   }
+  // --- 9. item fx: plan and catalog data, no double counted armor/shield bonus, new effect types
+  {
+    const fx = await imp('js/effects.js'); const { PLAN_FX, MAGIC_ITEMS } = await imp('js/data/item-fx.js'); const { PLANS } = await imp('js/data/plans.js');
+    const { SOURCE_LINKS } = await imp('js/data/sources.js');
+    const ids = new Set(PLANS.map((p) => p.id));
+    t.eq(Object.keys(PLAN_FX).filter((i) => !ids.has(i)), [], 'every PLAN_FX id is a plan');
+    t.eq(PLANS.filter((p) => !p.generic).map((p) => p.id).filter((i) => !PLAN_FX[i]), [], 'every non-generic plan has PLAN_FX');
+    t.eq([Object.values(PLAN_FX).filter((x) => x.fxSrc === 'SRD 5.2.1').length, Object.values(PLAN_FX).filter((x) => x.fxSrc === 'community').length, MAGIC_ITEMS.length], [40, 13, 110], 'item fx counts: 40 SRD + 13 community plans, 110 catalog items');
+    t.eq(PLANS.filter((p) => PLAN_FX[p.id] && p.attune !== null && PLAN_FX[p.id].attune !== p.attune).map((p) => p.id), [], 'plan attunement agrees with the item data');
+    t.eq(Object.keys(PLAN_FX).filter((i) => !SOURCE_LINKS.plan[i]), [], 'every plan with fx keeps its Source link');
+    const bad = [];
+    const seen = new Set();
+    const check = (id, x, type) => {
+      if (!x.rarity || !['SRD 5.2.1', 'community'].includes(x.fxSrc) || !x.notes || x.notes.length > 110 || typeof x.attune !== 'boolean' || !Array.isArray(x.fx)) bad.push(`${id}: fields`);
+      for (const e of x.fx) {
+        const c = fx.cleanEffect(e, true);
+        if (!c || c.type !== e.type || (c.target ?? undefined) !== (e.target ?? undefined)) bad.push(`${id}: effect ${JSON.stringify(e)}`);
+        if (e.type === 'choice') bad.push(`${id}: unresolved choice`);
+        if (e.text && e.text.length > 110) bad.push(`${id}: long text`);
+        if (e.type === 'ac' && (type === 'Armor' || type === 'Shield')) bad.push(`${id}: armor/shield ac effect would count twice`);
+      }
+      if (x.bonus && !['Armor', 'Shield'].includes(type)) bad.push(`${id}: bonus on ${type}`);
+    };
+    for (const [id, x] of Object.entries(PLAN_FX)) check(id, x, PLANS.find((p) => p.id === id).type);
+    for (const x of MAGIC_ITEMS) { if (seen.has(x.id)) bad.push(`${x.id}: duplicate`); seen.add(x.id); check(x.id, x, x.type); if (x.fxSrc !== 'SRD 5.2.1') bad.push(`${x.id}: catalog is SRD only`); }
+    t.eq(bad, [], 'item fx data is valid');
+    t.eq([PLAN_FX['6-armor-1'].bonus, PLAN_FX['6-armor-1'].fx.length, MAGIC_ITEMS.find((x) => x.id === 'armor-1').bonus, MAGIC_ITEMS.find((x) => x.id === 'shield-2').bonus], [1, 0, 1, 2], 'Armor +1 / Shield +2 carry a bonus and no ac effect');
+    t.eq(MAGIC_ITEMS.filter((x) => x.type === 'Weapon').flatMap((x) => x.fx.filter((e) => e.type !== 'note').map(() => x.id)), [], 'weapons have no stat effects');
+    t.eq(PLAN_FX['2-wand-of-the-war-mage-1'].fx, [{ type: 'spellAttack', value: 1 }], 'War Mage +1 plan: spell attack +1');
+    // new effect types: skillBonus, pb, speedMin
+    const mk = (f) => { const d = defaultState().character; d.level = 5; d.abilities.int = 16; d.abilities.dex = 14; d.speed = 30; f(d); return fx.createFx(d, {}); };
+    const it = (eff) => ({ id: 'i', name: 'Thing', equipped: true, effects: eff });
+    let f = mk((d) => { d.items = [it([{ type: 'skillBonus', target: 'sleightOfHand', value: 5 }])]; });
+    t.ok(f.skill('sleightOfHand').total === 2 + 5 && f.skill('sleightOfHand').parts.some((p) => p.label === 'Thing' && p.value === 5) && f.skill('stealth').total === 2, 'skillBonus adds to that skill only, named in the breakdown');
+    f = mk((d) => { d.items = [it([{ type: 'pb', value: 1 }])]; });
+    t.ok(f.pb === 4 && f.dc().total === 8 + 4 + 3 && f.satk().total === 4 + 3 , 'pb raises the Proficiency Bonus');
+    t.ok(f.breakdown('pb').total === 4 && f.breakdown('pb').parts[1].label === 'Thing' && f.dc().parts.some((p) => /includes Thing/.test(p.note || '')), 'pb breakdown names the item');
+    f = mk((d) => { d.items = [it([{ type: 'speedMin', value: 30 }])]; d.speed = 25; });
+    t.ok(f.speed().total === 30 && f.speed().parts.length === 2, 'speedMin raises Speed to the floor');
+    f = mk((d) => { d.items = [it([{ type: 'speedMin', value: 30 }])]; d.speed = 35; });
+    t.ok(f.speed().total === 35 && f.speed().parts.length === 1, 'speedMin never lowers Speed');
+    t.ok(fx.describeEffect({ type: 'skillBonus', target: 'sleightOfHand', value: 5 }) === 'Sleight of Hand checks +5' && fx.describeEffect({ type: 'pb', value: 1 }) === 'Proficiency Bonus +1', 'new effect types are described');
+    t.ok(fx.choiceCount({ n: 'pb' }, 4) === 4 && fx.choiceCount({ n: 2 }, 4) === 2, 'choiceCount takes the effective Proficiency Bonus');
+    // items made before this version keep working: catalog fields default and are cleaned
+    const it2 = normalize({ version: 5, character: { items: [{ id: 'a', name: 'X', catalogId: 7, fxSrc: 'bogus' }] } }).character.items[0];
+    t.ok(it2.catalogId === '' && it2.fxSrc === '', 'catalogId and fxSrc are cleaned by normalize');
+  }
+
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {

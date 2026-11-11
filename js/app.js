@@ -7,6 +7,7 @@ import { SPELLS, SOURCE_LABEL, SCHOOLS, slug } from './data/spells.js';
 import { APP_VERSION } from './version.js';
 import { SOURCE_LINKS, CLASS_LINK, SUBCLASS_LINK } from './data/sources.js';
 import { PLANS, PLAN_TYPES, TIERS } from './data/plans.js';
+import { PLAN_FX, MAGIC_ITEMS as CAT_ITEMS } from './data/item-fx.js';
 import { FEATS, FEAT_CATEGORIES, FEAT_SOURCES } from './data/feats.js';
 import { WEAPONS, ARMOR } from './data/equipment.js';
 import { SPELL_FX } from './data/spell-fx.js';
@@ -113,7 +114,7 @@ function FX() {
   if (!fxMemo) { fxMemo = createFx(C(), FX_CAT); queueMicrotask(dirtyFx); }
   return fxMemo;
 }
-const pb = () => profBonus(lvl());
+const pb = () => FX().pb; // level bonus plus effects (Ioun Stone of Mastery)
 const am = (k) => FX().am(k);
 const abilScore = (k) => FX().score(k); // total score (base + effects)
 const intMod = () => am('int');
@@ -192,6 +193,10 @@ function weaponStats(it) {
   return { hit, dmg, prof };
 }
 
+// A magic item counts when it does not need attunement, or when it is attuned.
+const itemActive = (it) => !it.needsAttune || !!it.attuned;
+// Armor made from a plan (Elven Chain, Dwarven Plate...) starts without a base armor: still the 11 / light defaults.
+const armorNeedsBase = (it) => it.type === 'Armor' && !!it.armor && !it.armor.base && num(it.armor.baseAC) === 11 && it.armor.armorType === 'light';
 // Armor Class from equipped items (or the manual value when "auto" is off). Item and spell bonuses come from effects.js.
 function acInfo() {
   const c = C();
@@ -207,14 +212,16 @@ function acInfo() {
     const a = armor.armor || {};
     const cap = hasFeat('medium-armor-master') && abilScore('dex') >= 16 ? 3 : 2; // feat cap: community sources
     const dexPart = a.armorType === 'heavy' ? 0 : a.armorType === 'medium' ? Math.min(dex, cap) : dex;
-    base.push({ label: a.base || armor.name || 'Armor', value: num(a.baseAC) + num(a.bonus) });
+    base.push({ label: a.base || armor.name || 'Armor', value: num(a.baseAC) + (itemActive(armor) ? num(a.bonus) : 0) });
     if (a.armorType !== 'heavy') base.push({ label: 'DEX', value: dexPart });
   } else base.push({ label: 'Unarmored', value: 10 }, { label: 'DEX', value: dex });
   // Only one armor and one shield can be worn at a time (SRD 5.2.1 p.92): the first of each counts.
-  if (shields[0]) base.push({ label: 'Shield', value: 2 + num(shields[0].shield?.bonus) });
+  if (shields[0]) base.push({ label: 'Shield', value: 2 + (itemActive(shields[0]) ? num(shields[0].shield?.bonus) : 0) });
   const { total: ac, parts } = FX().ac(base, { armor: !!armor, shield: !!shields[0] });
   const text = parts.map((p, i) => (i === 0 ? `${p.label} ${p.value}` : `${p.value < 0 ? '−' : '+'} ${p.label} ${Math.abs(p.value)}`)).join(' ') + ` = ${ac}`;
   const warns = [];
+  for (const it of [armor, shields[0]]) if (it && !itemActive(it) && num(it.type === 'Armor' ? it.armor?.bonus : it.shield?.bonus)) warns.push(`${it.name || it.type}: its +${num(it.type === 'Armor' ? it.armor.bonus : it.shield.bonus)} bonus needs attunement (not counted yet).`);
+  if (armor && armorNeedsBase(armor)) warns.push(`${armor.name || 'Armor'}: pick the armor type (Base armor) in Equipment & bag; base AC is not set.`);
   if (armor?.armor?.armorType === 'heavy') warns.push("Artificers aren't trained in heavy armor (Disadvantage on D20 Tests using STR or DEX, can't cast spells).");
   if (armor && num(armor.armor?.str) > abilScore('str')) warns.push(`Speed −10 ft (needs STR ${num(armor.armor.str)}).`);
   if (armor?.armor?.stealth) warns.push('Disadvantage on Stealth checks.');
@@ -353,7 +360,7 @@ const BD_TITLE = (key) => {
   const [kind, arg] = key.split(':');
   return {
     abil: `${ABILITY_NAME[arg]} score`, mod: `${ABILITY_NAME[arg]} modifier`, save: `${ABILITY_NAME[arg]} saving throw`, skill: SKILL_NAME[arg] || 'Skill',
-    init: 'Initiative', speed: 'Speed', hpmax: 'Max HP', dc: 'Spell save DC', satk: 'Spell attack', passive: 'Passive Perception', ac: 'Armor Class',
+    init: 'Initiative', speed: 'Speed', hpmax: 'Max HP', dc: 'Spell save DC', satk: 'Spell attack', passive: 'Passive Perception', ac: 'Armor Class', pb: 'Proficiency Bonus',
   }[kind] || key;
 };
 const bdSr = (key) => `Show how ${BD_TITLE(key)} is calculated`;
@@ -620,6 +627,49 @@ function fxRow(path, e) {
 function fxEditor(path, list, hint) {
   return `<div class="fx-editor subbox"><span class="lbl">Effects</span>${hint ? `<p class="hint">${esc(hint)}</p>` : ''}${(list || []).map((e) => fxRow(path, e)).join('')}<button class="ghost small" data-action="addEffect" data-path="${esc(path)}">+ Add effect</button></div>`;
 }
+// Magic item catalog (item-fx.js): SRD 5.2.1 items and the plans' items. An item gets its effects copied once (item.catalogId remembers where from).
+const CAT_BY_ID = new Map(CAT_ITEMS.map((e) => [e.id, e]));
+const CAT_BY_NAME = new Map(CAT_ITEMS.map((e) => [e.name, e]));
+const PLAN_BY_NAME = new Map(PLANS.filter((p) => !p.generic).map((p) => [p.name, p]));
+// Catalog items a plan learned from a generic one can become: right rarity, Wondrous, not cursed. Common plans have none in the catalog.
+function genericPool(plan) {
+  const base = PLANS.find((p) => p.name === plan.base);
+  const want = base?.tier >= 14 ? 'Rare' : base?.tier >= 10 ? 'Uncommon' : 'Common';
+  return CAT_ITEMS.filter((e) => e.rarity === want && e.type === 'Wondrous' && !e.fx.some((x) => x.type === 'note' && /^Cursed/.test(x.text)));
+}
+const planEntry = (p) => (PLAN_FX[p.id] ? { ...PLAN_FX[p.id], name: p.name, type: p.type, key: `plan:${p.id}` } : null);
+const catEntry = (e) => ({ ...e, key: `item:${e.id}` });
+// The catalog data that fits an existing item: its plan, else an exact name match. Null when there is none.
+function catalogFor(it) {
+  const plan = it.planId ? PLANS.find((p) => p.id === it.planId) : null;
+  if (plan && PLAN_FX[plan.id]) return planEntry(plan);
+  if (CAT_BY_NAME.has(it.name)) return catEntry(CAT_BY_NAME.get(it.name));
+  const byName = PLAN_BY_NAME.get(it.name);
+  return byName ? planEntry(byName) : null;
+}
+// Copies a catalog entry's effects (fresh ids) onto an item. Armor and shield +N go to the item's own bonus, which acInfo counts once.
+function applyEntry(it, e) {
+  ensureItemData(it);
+  const fx = (e.fx || []).map((x) => cleanEffect(x)).filter(Boolean).map((x) => ({ ...x, id: uid() }));
+  it.effects = [...it.effects, ...fx];
+  if (fx.some((x) => x.type === 'ac') && num(it.acBonus)) it.acBonus = 0; // the catalog ac effect replaces the hand-entered AC bonus (never both)
+  if (e.attune) it.needsAttune = true;
+  if (e.bonus) {
+    if (it.type === 'Armor') it.armor.bonus = Math.max(num(it.armor.bonus), e.bonus);
+    if (it.type === 'Shield') it.shield.bonus = Math.max(num(it.shield.bonus), e.bonus);
+  }
+  if (!it.notes && e.notes) it.notes = e.notes;
+  it.catalogId = e.key;
+  it.fxSrc = e.fxSrc || '';
+}
+// The one-time "Apply catalog effects" offer: items without a catalog link or effects of their own whose catalog entry would add something.
+function catalogOffer(it) {
+  if (it.catalogId || (it.effects || []).length) return null;
+  const e = catalogFor(it);
+  if (!e) return null;
+  const bonus = it.type === 'Armor' ? num(it.armor?.bonus) : it.type === 'Shield' ? num(it.shield?.bonus) : 0;
+  return e.fx.length || (e.bonus && e.bonus > bonus) || (e.attune && !it.needsAttune) ? e : null;
+}
 const ITEM_FX_HINT = 'Counted while the item is equipped (and attuned, if it requires attunement). The "+" on each number shows them.';
 
 // ----- Stats
@@ -667,7 +717,7 @@ function tabStats() {
       ${input('character.alignment', { label: 'Alignment', list: 'dl-align' })}
       ${select('character.size', ['Small', 'Medium'], { label: 'Size' })}
     </div>
-    <p class="hint">Proficiency Bonus ${calcSpan('pb')}</p>
+    <p class="hint">Proficiency Bonus ${calcSpan('pb')} ${bdBtn('pb')}</p>${bdGroup(['pb'])}
   </section>
 
   <section class="card">
@@ -1338,6 +1388,8 @@ function itemCard(i, kind) {
     <div class="row tight tags-row">
       ${fx ? `<span class="badge fx" data-calc="itemfx:${esc(i.id)}">${esc(fx)}</span>` : ''}
       ${i.type === 'Armor' && i.armor.str ? `<span class="tag-s">STR ${esc(i.armor.str)}</span>` : ''}
+      ${i.type === 'Armor' && armorNeedsBase(i) ? '<span class="tag-s warn">Pick the armor type</span>' : ''}
+      ${i.fxSrc === 'community' && i.effects.length ? '<span class="tag-s warn">Effects unverified</span>' : ''}
       ${i.type === 'Armor' && i.armor.stealth ? '<span class="tag-s c">Stealth disadv.</span>' : ''}
       ${i.rarity === 'Mundane' ? '' : `<span class="tag-s src">${esc(i.rarity)}</span>`}
       ${kind === 'magic' ? `<span class="tag-s src">${esc(ORIGINS.find((o) => o[0] === i.origin)?.[1] || i.origin)}</span>` : ''}
@@ -1347,6 +1399,7 @@ function itemCard(i, kind) {
     <div class="icard-tog">
       <button class="tog" data-action="toggleEquip" data-id="${esc(i.id)}" aria-pressed="${!!i.equipped}">Equipped</button>
       ${i.needsAttune || i.attuned ? `<button class="tog" data-action="toggleAttune" data-id="${esc(i.id)}" aria-pressed="${!!i.attuned}">Attuned</button>` : ''}
+      ${catalogOffer(i) ? `<button class="small" data-action="applyFx" data-id="${esc(i.id)}">Apply catalog effects</button>` : ''}
     </div>
     <details class="edit" data-block="e-${esc(i.id)}" data-lazy="${kind}:${esc(i.id)}" ${open ? 'open' : ''}>
       <summary>Edit</summary>
@@ -1434,6 +1487,11 @@ function itemsList() {
   if (!list.length) return `<p class="muted">${C().items.some((i) => i.rarity !== 'Mundane') ? 'No item matches these filters.' : 'No magic items yet. Create one from the Plans tab or add a found item.'}</p>`;
   return list.map((i) => itemCard(i, 'magic')).join('');
 }
+const CAT_RARITIES = ['Uncommon', 'Rare', 'Very Rare', 'Legendary'];
+function catalogPicker() {
+  const groups = CAT_RARITIES.map((r) => `<optgroup label="${r}">${CAT_ITEMS.filter((e) => e.rarity === r).map((e) => `<option value="${esc(e.id)}">${esc(e.name)}</option>`).join('')}</optgroup>`).join('');
+  return `<select data-catalog="newitem" aria-label="Add an SRD 5.2.1 magic item with its effects"><option value="">— choose from the catalog —</option>${groups}</select>`;
+}
 function tabItems() {
   return `
   <section class="card">
@@ -1451,6 +1509,8 @@ function tabItems() {
     </div>
     <div id="list">${itemsList()}</div>
     <button class="ghost" data-action="addItem">+ Add found item</button>
+    <label class="field"><span>Add an SRD 5.2.1 magic item with its effects</span>${catalogPicker()}</label>
+    <p class="hint">The catalog lists ${CAT_ITEMS.length} SRD 5.2.1 items that change a number (AC, saves, scores, speed...). Effects count once the item is equipped, and attuned if it needs attunement; edit them under Edit.</p>
     <p class="hint">Weapons, armor, weight and coins are on the Equipment & bag tab.</p>
   </section>`;
 }
@@ -2152,7 +2212,7 @@ const spellLabel = (id) => { const sp = SPELLS.find((x) => x.id === id); return 
 const choiceLabel = (ch, v) => (ch.of === 'ability' ? ABILITY_NAME[v] : ch.of === 'skill' || ch.of === 'skillOrTool' ? SKILL_NAME[v] : ch.of === 'spell' ? spellLabel(v) : ch.of === 'list' ? `${v[0].toUpperCase()}${v.slice(1)}` : null) || v;
 // One choice: how many picks it asks for, what it offers (null = free text) and whether it waits for another choice.
 function choiceSlots(ch, picks) {
-  const count = choiceCount(ch, lvl());
+  const count = choiceCount(ch, pb());
   let opts = choiceOptions(ch, picks, POOLS);
   // Effects of the feat being edited are ignored, so its own current picks stay selectable and an un-picked skill is not still counted.
   const others = FX().list.filter((e) => !(e.src.kind === 'feat' && sh.entry && e.src.id === sh.entry));
@@ -2170,7 +2230,7 @@ function choiceSlots(ch, picks) {
 function cleanPicks(featId, picks) {
   const out = {};
   for (const ch of featChoices(FEAT_FX[featId]?.fx)) {
-    const count = choiceCount(ch, lvl());
+    const count = choiceCount(ch, pb());
     const vals = [].concat(picks[ch.key] ?? []).map((v) => String(v || '').trim().slice(0, 80)).filter(Boolean);
     if (vals.length) out[ch.key] = count === 1 ? vals[0] : vals;
   }
@@ -2354,6 +2414,16 @@ const SHEETS = {
         ${!sh.entry && missing ? `<p class="hint" role="status">${missing} choice${missing > 1 ? 's' : ''} left to make.</p>` : ''}`,
     };
   },
+  craftpick() {
+    const list = genericPool(allPlans().find((x) => x.id === sh.id) || {});
+    const want = list[0]?.rarity || '';
+    return {
+      title: 'Which item?',
+      body: `<p>${esc(allPlans().find((x) => x.id === sh.id)?.name || 'Plan')}: pick an SRD 5.2.1 item to copy its effects, or make a custom item.</p>
+        <div class="sheet-list" role="group" aria-label="${want} Wondrous items">${list.map((e) => `<button class="big" data-action="craftPick" data-cat="${esc(e.id)}">${esc(e.name)}</button>`).join('')}</div>
+        <div class="sheet-actions"><button class="big" data-action="closeSheet">Cancel</button><button class="ok big" data-action="craftPick" data-cat="">Custom item</button></div>`,
+    };
+  },
   generic() {
     const base = PLANS.find((p) => p.id === sh.id);
     const max = at(PLANS_KNOWN, lvl());
@@ -2428,6 +2498,29 @@ function makeCannons(mode, level = 0) {
   toast(n === 2 ? 'Two cannons created' : 'Cannon created', { undo: true });
 }
 
+// Creates an item from a plan (or, for a generic plan's item, from the picked catalog entry) and copies its effects onto it.
+function craftFrom(plan, el, picked) {
+  const max = at(MAGIC_ITEMS, lvl());
+  const reps = replicated();
+  const e = picked ? catEntry(picked) : planEntry(plan);
+  const apply = () => mutate(() => {
+    const c = C();
+    const old = c.items.filter((i) => i.origin === 'replicated');
+    if (old.length >= max) c.items = c.items.filter((i) => i.id !== old[0].id);
+    const generic = !picked && /^(Armor|Weapon) \+\d/.test(plan.name); // base unknown: don't count it until the player picks one
+    const type = picked ? picked.type : plan.type === 'Any' ? 'Other' : plan.type;
+    const rarity = e?.rarity || (plan.tier >= 14 ? 'Rare' : 'Uncommon');
+    const it = newItem({ name: picked ? picked.name : plan.name, origin: 'replicated', planId: plan.id, type, rarity, needsAttune: e ? e.attune === true : plan.attune === true, equipped: !generic, notes: generic ? 'Choose the base armor/weapon in Equipment & bag, then equip it.' : '' });
+    if (e) applyEntry(it, e);
+    c.items.push(it);
+  }, { msg: `${picked ? picked.name : plan.name} created`, sub: e?.fx?.length || e?.bonus ? `${e.fxSrc === 'community' ? 'Community data (unverified)' : 'SRD 5.2.1'} effects copied onto it.` : 'Set rarity and charges on Magic items.' });
+  if (reps.length < max) return apply();
+  confirmSheet(el, {
+    title: 'Over your item limit',
+    text: `You already have ${reps.length} of ${max} replicated items. Creating ${picked ? picked.name : plan.name} makes the oldest one (${reps[0].name}) vanish.`,
+    ok: 'Continue', run: apply,
+  });
+}
 const actions = {
   tab: (el) => { setTab(el.dataset.key); jq = ''; jtag = ''; commit(); window.scrollTo(0, 0); },
   section: (el) => {
@@ -2660,7 +2753,14 @@ const actions = {
   },
   removeEffect: (el) => {
     const path = el.dataset.path;
-    if (Array.isArray(getPath(path))) mutate(() => { setPath(path, getPath(path).filter((x) => x.id !== el.dataset.id)); }, { msg: 'Effect removed' });
+    if (Array.isArray(getPath(path))) {
+      mutate(() => {
+        setPath(path, getPath(path).filter((x) => x.id !== el.dataset.id));
+        const m = /^character\.items\.#([^.]+)\.effects$/.exec(path);
+        const it = m && C().items.find((x) => x.id === m[1]);
+        if (it && !it.effects.length) { it.catalogId = ''; it.fxSrc = ''; } // no catalog effects left: forget where they came from
+      }, { msg: 'Effect removed' });
+    }
   },
   bd: (el) => {
     const k = el.dataset.key;
@@ -2729,22 +2829,26 @@ const actions = {
   craft: (el) => {
     const plan = allPlans().find((p) => p.id === el.dataset.id);
     if (!plan) return;
-    const max = at(MAGIC_ITEMS, lvl());
-    const reps = replicated();
-    const apply = () => mutate(() => {
-      const c = C();
-      const old = c.items.filter((i) => i.origin === 'replicated');
-      if (old.length >= max) c.items = c.items.filter((i) => i.id !== old[0].id);
-      const rarity = plan.tier >= 14 ? 'Rare' : 'Uncommon';
-      const generic = /^(Armor|Weapon) \+\d/.test(plan.name); // base unknown: don't count it until the player picks one
-      c.items.push(newItem({ name: plan.name, origin: 'replicated', planId: plan.id, type: plan.type === 'Any' ? 'Other' : plan.type, rarity, needsAttune: plan.attune === true, equipped: !generic, notes: generic ? 'Choose the base armor/weapon in Equipment & bag, then equip it.' : '' }));
-    }, { msg: `${plan.name} created`, sub: 'Set rarity and charges on Magic items.' });
-    if (reps.length < max) return apply();
-    confirmSheet(el, {
-      title: 'Over your item limit',
-      text: `You already have ${reps.length} of ${max} replicated items. Creating ${plan.name} makes the oldest one (${reps[0].name}) vanish.`,
-      ok: 'Continue', run: apply,
-    });
+    // A plan learned from a generic one ("any Uncommon Wondrous item"): an exact catalog name is used as is, otherwise the player picks a catalog item or stays custom.
+    if (!plan.custom) return craftFrom(plan, el);
+    const pool = genericPool(plan);
+    const exact = pool.find((e) => e.name === plan.name); // only a catalog item that fits the generic plan counts as a match
+    if (exact) return craftFrom(plan, el, exact);
+    if (!pool.length) return craftFrom(plan, el); // nothing to pick from (Common plans): a custom item
+    openSheet('craftpick', el, { id: plan.id });
+  },
+  craftPick: (el) => {
+    const plan = allPlans().find((p) => p.id === sh?.id);
+    const entry = CAT_BY_ID.get(el.dataset.cat);
+    const opener = sh?.opener;
+    closeSheet();
+    if (plan) craftFrom(plan, (opener && view.querySelector(opener)) || null, entry);
+  },
+  applyFx: (el) => {
+    const it = C().items.find((x) => x.id === el.dataset.id);
+    const e = it && catalogOffer(it);
+    if (!e) return;
+    mutate(() => { applyEntry(it, e); }, { msg: `Catalog effects applied: ${it.name || 'item'}`, sub: e.fxSrc === 'community' ? 'Community data: unverified.' : 'SRD 5.2.1.' });
   },
   addItem: () => {
     const it = newItem();
@@ -3101,6 +3205,7 @@ view.addEventListener('keydown', (e) => {
 view.addEventListener('change', (e) => {
   const el = e.target;
   if (el.id === 'importFile') return importFile(el);
+  if (el.dataset.catalog === 'newitem') return addCatalogItem(el);
   if (el.dataset.catalog) applyCatalog(el);
   if (el.dataset.bind && (el.hasAttribute('data-rerender') || el.type === 'checkbox' || el.tagName === 'SELECT')) setTimeout(render, 0);
 });
@@ -3138,6 +3243,18 @@ view.addEventListener('toggle', (e) => {
   }
   if (d.block) { if (t.open) openBlocks.add(d.block); else openBlocks.delete(d.block); return; }
 }, true);
+
+// Magic items page: add a catalog item (SRD 5.2.1) with its effects prefilled.
+function addCatalogItem(el) {
+  const e = CAT_BY_ID.get(el.value);
+  if (!e) return;
+  const entry = catEntry(e);
+  const baseNote = /^(Armor|Weapon)$/.test(e.type) ? 'Choose the base armor/weapon in Equipment & bag.' : '';
+  const it = newItem({ name: e.name, origin: 'found', type: e.type, rarity: e.rarity, needsAttune: e.attune === true, notes: baseNote });
+  applyEntry(it, entry);
+  if (baseNote) it.notes = [e.notes, baseNote].filter(Boolean).join(' ');
+  mutate(() => { C().items.push(it); }, { msg: `${e.name} added`, sub: 'SRD 5.2.1 effects copied onto it. Equip it (and attune) to count them.' });
+}
 
 // Picking a base weapon/armor fills in its numbers (and the name when empty); everything stays editable.
 function applyCatalog(el) {
