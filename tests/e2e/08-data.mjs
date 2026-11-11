@@ -13,8 +13,8 @@ export async function run(env, t) {
   // ---- Upgrade snapshot, daily marker, long-rest snapshot
   let p = await openPage(env, t, { state: seedV3() });
   let sn = await snaps(p);
-  t.ok(sn.length === 1 && /Before upgrade to v4/.test(sn[0].reason) && JSON.parse(sn[0].data).version === 3, 'migration snapshot holds the old v3 data');
-  t.eq((await saved(p)).version, 4, 'upgraded copy stored');
+  t.ok(sn.length === 1 && /Before upgrade to v5/.test(sn[0].reason) && JSON.parse(sn[0].data).version === 3, 'migration snapshot holds the old v3 data');
+  t.eq((await saved(p)).version, 5, 'upgraded copy stored');
   await p.reload(); await p.waitForSelector('h1');
   t.eq((await snaps(p)).length, 1, 'no second snapshot on the same day');
   await p.evaluate(() => localStorage.setItem('dnd-companion-snapday', '2000-01-01'));
@@ -39,7 +39,7 @@ export async function run(env, t) {
   await p.waitForSelector('.sheet', { state: 'detached' });
   const [dl] = await Promise.all([p.waitForEvent('download'), p.click('[data-action="export"]')]);
   const exp = JSON.parse(fs.readFileSync(await dl.path(), 'utf8'));
-  t.ok(exp.version === 4 && exp.journal.npcs.some((n) => n.name === 'Roundtrip NPC') && exp.character.voice.lines.some((l) => l.text === 'RT line'), 'export contains journal and voice');
+  t.ok(exp.version === 5 && exp.journal.npcs.some((n) => n.name === 'Roundtrip NPC') && exp.character.voice.lines.some((l) => l.text === 'RT line'), 'export contains journal and voice');
   t.ok(!exp.ui || !('drive' in exp.ui), 'export has no Drive metadata');
   const v2 = { version: 2, character: { name: 'Imported Hero', level: 2, bio: { personality: 'Grumpy' } }, sessions: [{ number: 1, title: 'Imp session' }] };
   await p.setInputFiles('#importFile', file('v2.json', v2));
@@ -49,7 +49,7 @@ export async function run(env, t) {
   await p.waitForSelector('.sheet', { state: 'detached' });
   let st = await saved(p); sn = await snaps(p);
   t.ok(sn[0].reason === 'Before import' && JSON.parse(sn[0].data).journal.npcs.some((n) => n.name === 'Roundtrip NPC'), 'snapshot taken before import holds the previous data');
-  t.ok(st.character.name === 'Imported Hero' && st.version === 4 && st.character.voice.personality === 'Grumpy' && st.journal.npcs.length === 0, 'v2 backup imported and migrated');
+  t.ok(st.character.name === 'Imported Hero' && st.version === 5 && st.character.voice.personality === 'Grumpy' && st.journal.npcs.length === 0, 'v2 backup imported and migrated');
   await goData(p);
   await p.setInputFiles('#importFile', file('v2.json', v2));
   await p.waitForSelector('.sheet'); await p.click('.sheet [data-action="closeSheet"]');

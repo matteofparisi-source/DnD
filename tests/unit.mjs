@@ -99,7 +99,7 @@ export async function run(t) {
   const quiet = { warn: console.warn, error: console.error }; console.warn = console.error = () => {}; // store.js logs on purpose in the failure cases below
   // --- 6. store.js: migrations, id sanitising, snapshots, quota fallback
   const st = await imp('js/store.js'); const { normalize, defaultState, SCHEMA_VERSION } = st;
-  t.ok(SCHEMA_VERSION === 4, 'SCHEMA_VERSION is 4 (update the migration tests when it changes)');
+  t.ok(SCHEMA_VERSION === 5, 'SCHEMA_VERSION is 5 (update the migration tests when it changes)');
   const v1 = { character: { name: 'Old Hero', classes: [{ name: 'Wizard', level: 4 }], inventory: [{ name: 'Rope', qty: 2 }], bio: { personality: 'Curious and loud' } }, sessions: [{ number: 1, title: 'Old session' }] };
   const v2 = { version: 2, character: { name: 'V2', level: 3, ac: 15, bio: { personality: 'Dry wit', backstory: 'Forged' }, items: [{ name: 'Armor +1', equipped: true }] }, sessions: [{ id: 's1', number: 2, title: 'S', tags: 'bad' }] };
   const v3 = (() => { const d = defaultState(); d.version = 3; delete d.journal; delete d.character.voice; d.character.bio.personality = 'Quiet'; d.sessions = [{ id: 'a', number: 1, title: 'x' }]; return JSON.parse(JSON.stringify(d)); })();
@@ -169,14 +169,77 @@ export async function run(t) {
   // unreadable data is preserved, not overwritten
   mem.clear(); mem.set('dnd-companion-v1', '{"broken');
   const ld = st.load();
-  t.ok(ld.version === 4 && st.loadInfo.unreadable, 'unreadable data: fallback state and flag');
+  t.ok(ld.version === 5 && st.loadInfo.unreadable, 'unreadable data: fallback state and flag');
   t.ok(st.readSnaps()[0].reason === 'Unreadable data' && st.readSnaps()[0].kind === 'important' && st.readSnaps()[0].data === '{"broken', 'raw string kept as an important snapshot');
   st.save(ld); t.ok(mem.get('dnd-companion-v1') === '{"broken', 'main key not overwritten before the user changes something');
   st.releaseSave(); st.save(ld); t.ok(mem.get('dnd-companion-v1') !== '{"broken', 'saves again after releaseSave()');
   mem.clear(); mem.set('dnd-companion-v1', JSON.stringify({ version: 4, character: { items: [{ id: 'x', weapon: { damages: 5 } }] } }));
-  t.ok(st.load().version === 4, 'odd but parseable data loads without throwing');
+  t.ok(st.load().version === 5, 'odd but parseable data loads without throwing');
   Object.assign(console, quiet);
   t.ok(st.isBackup({ character: {} }) && !st.isBackup([]) && !st.isBackup({ character: null }) && !st.isBackup('x'), 'isBackup accepts only objects with a character object');
+
+  // --- 7. effects.js: pure math, breakdown parts, attunement gating, v4 -> v5 migration
+  {
+    const fx = await imp('js/effects.js'); const { SPELL_FX } = await imp('js/data/spell-fx.js');
+    const mk = (f) => { const d = defaultState().character; d.level = 5; d.abilities.int = 16; d.abilities.dex = 14; return f ? (f(d), d) : d; };
+    const E = (c, cat = {}) => fx.createFx(c, cat);
+    const sumOk = (b) => b.total === b.parts.reduce((n, p) => n + p.value, 0);
+    t.ok(E(mk()).score('int') === 16 && E(mk()).dc().total === 8 + 3 + 3, 'no effects: score and DC unchanged');
+    const ring = (eff, o = {}) => ({ id: 'i1', name: 'Thing', equipped: true, needsAttune: false, attuned: false, effects: eff, ...o });
+    let c = mk((d) => { d.items = [ring([{ type: 'ability', target: 'int', value: 2 }])]; });
+    t.ok(E(c).score('int') === 18 && E(c).dc().total === 15 && E(c).abil('int').parts.length === 2, 'ability +2 raises score and DC');
+    c = mk((d) => { d.abilities.int = 19; d.items = [ring([{ type: 'ability', target: 'int', value: 2 }])]; });
+    t.ok(E(c).score('int') === 20 && E(c).abil('int').parts[1].note.includes('capped at 20'), 'ability bonus capped at 20');
+    c = mk((d) => { d.abilities.int = 19; d.items = [ring([{ type: 'ability', target: 'int', value: 2, max: 30 }])]; });
+    t.ok(E(c).score('int') === 21, 'ability bonus with max 30');
+    c = mk((d) => { d.abilities.int = 22; d.items = [ring([{ type: 'ability', target: 'int', value: 2 }])]; });
+    t.ok(E(c).score('int') === 22, 'a base above the cap is never lowered');
+    c = mk((d) => { d.items = [ring([{ type: 'abilityMin', target: 'int', value: 19 }])]; });
+    t.ok(E(c).score('int') === 19 && sumOk(E(c).abil('int')), 'abilityMin raises a lower score');
+    c = mk((d) => { d.abilities.int = 20; d.items = [ring([{ type: 'abilityMin', target: 'int', value: 19 }])]; });
+    t.ok(E(c).score('int') === 20, 'abilityMin never lowers');
+    c = mk((d) => { d.items = [ring([{ type: 'ability', target: 'int', value: 1 }, { type: 'abilityMin', target: 'int', value: 19 }])]; });
+    t.ok(E(c).score('int') === 19, 'abilityMin applies after ability adds');
+    // attunement gating
+    c = mk((d) => { d.items = [ring([{ type: 'ac', value: 1 }], { needsAttune: true })]; });
+    t.eq(E(c).ac([{ label: 'Base', value: 10 }]).total, 10, 'needs attunement and not attuned: no effect');
+    c.items[0].attuned = true; t.eq(E(c).ac([{ label: 'Base', value: 10 }]).total, 11, 'attuned: effect applies');
+    c.items[0].equipped = false; t.eq(E(c).ac([{ label: 'Base', value: 10 }]).total, 10, 'not equipped: no effect');
+    // ac conditions
+    c = mk((d) => { d.items = [ring([{ type: 'ac', value: 1, cond: 'armor' }, { type: 'ac', value: 2, cond: 'noArmor' }, { type: 'ac', value: 4, cond: 'noShield' }, { type: 'ac', value: 8, cond: 'noArmorNoShield' }])]; });
+    const acT = (ctx) => E(c).ac([{ label: 'B', value: 0 }], ctx).total;
+    t.eq([acT({ armor: true, shield: true }), acT({ armor: true, shield: false }), acT({ armor: false, shield: true }), acT({ armor: false, shield: false })], [1, 5, 2, 14], 'ac conditions');
+    // breakdown parts sum to total for every key
+    c = mk((d) => { d.hp.auto = true; d.saveBonus = 1; d.initBonus = 2; d.skills = { arcana: 1, stealth: 2 }; d.saveProf.int = true;
+      d.items = [ring([{ type: 'ability', target: 'dex', value: 2 }, { type: 'save', target: 'all', value: 1 }, { type: 'speed', value: 10 }, { type: 'speedMult', value: 2 }, { type: 'hp', value: 3, hpPerLevel: 2 }, { type: 'spellDC', value: 1 }, { type: 'init', value: 'pb' }, { type: 'skillExpert', target: 'perception' }])]; });
+    const f = E(c);
+    const keys = ['abil:dex', 'mod:dex', 'save:int', 'save:str', 'skill:arcana', 'skill:perception', 'init', 'speed', 'hpmax', 'dc', 'satk', 'passive'];
+    t.eq(keys.filter((k) => !sumOk(f.breakdown(k))), [], 'breakdown parts add up to the total');
+    t.ok(f.init().total === 8 && f.speed().total === 80 && f.hpmax(true).total === f.hpmax(true).parts.reduce((n, p) => n + p.value, 0) && f.save('int').total === 3 + 3 + 1 + 1, 'init, speed, hp and save totals');
+    t.ok(f.skillInfo('perception').level === 2 && f.passive().total === 10 + 0 + 3 * 2 + 1 * 0 + f.am('wis') - 0, 'effect expertise feeds skill and passive');
+    // spell effects: concentration and buffs
+    const cat = { spellFx: SPELL_FX, spells: [{ id: 'haste', name: 'Haste' }, { id: 'shield', name: 'Shield' }] };
+    c = mk((d) => { d.concentration = { id: 'haste', name: 'Haste' }; });
+    t.ok(E(c, cat).speed().total === 60 && E(c, cat).ac([{ label: 'B', value: 10 }]).total === 12, 'concentration spell effects apply');
+    c.concentration = { id: '', name: '' }; c.buffs = ['shield'];
+    t.eq(E(c, cat).ac([{ label: 'B', value: 10 }]).total, 15, 'buff spell applies');
+    t.ok(Object.values(SPELL_FX).every((x) => x.fxSrc === 'SRD 5.2.1' && fx.cleanEffects(x.fx).length === x.fx.length), 'SPELL_FX entries are SRD-sourced and valid');
+    // choices extension point
+    t.eq(fx.resolveChoices([{ type: 'choice', key: 'a', then: { type: 'ability', target: '$', value: 1 } }], { a: ['int', 'con'] }).map((e) => e.target), ['int', 'con'], 'choice effects resolve from entry.choices');
+    // coercion
+    t.ok(fx.cleanEffect({ type: 'bogus' }) === null && fx.cleanEffect({ type: 'ability', target: 'zzz', value: 999 }).value === 30 && fx.cleanEffect({ type: 'hpPerLevel', value: 2 }).hpPerLevel === 2, 'cleanEffect drops unknown types, clamps, maps hpPerLevel');
+    // v4 -> v5 migration
+    const v4 = defaultState(); v4.version = 4; delete v4.character.buffs;
+    v4.character.abilities.int = 17;
+    v4.character.items = [{ id: 'a', name: 'Cloak', effects: [{ type: 'ac', value: 99 }, { type: 'nope' }, 5] }, { id: 'b', name: 'Plain' }];
+    v4.character.feats = [{ id: 'f', featId: 'alert', level: 4, notes: 'x' }];
+    const m1 = normalize(JSON.parse(JSON.stringify(v4))); const m2 = normalize(JSON.parse(JSON.stringify(m1)));
+    t.ok(m1.version === SCHEMA_VERSION && m1.character.abilities.int === 17, 'v4 -> v5 keeps base scores');
+    t.ok(m1.character.items[0].effects.length === 1 && m1.character.items[0].effects[0].value === 20 && /^[\w-]+$/.test(m1.character.items[0].effects[0].id) && m1.character.items[1].effects.length === 0, 'item effects coerced');
+    t.ok(Array.isArray(m1.character.buffs) && m1.character.feats[0].effects.length === 0 && JSON.stringify(m1.character.feats[0].choices) === '{}', 'feat choices/effects and buffs added');
+    t.ok(JSON.stringify(m1) === JSON.stringify(m2), 'v5 normalize is idempotent');
+    t.ok(normalize({ version: 5, character: { buffs: ['x', 3, 'x'] } }).character.buffs.join() === 'x', 'buffs deduped and cleaned');
+  }
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {

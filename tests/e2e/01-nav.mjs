@@ -15,7 +15,7 @@ export async function run(env, t) {
   t.eq(await text(p, 'h1'), 'Old Hero', 'v1 data migrates, name shown');
   await go(p, 'journal', 'journal');
   t.ok((await p.textContent('#panel')).includes('Old session'), 'old session kept');
-  t.eq((await saved(p)).version, 4, 'stored copy upgraded to v4');
+  t.eq((await saved(p)).version, 5, 'stored copy upgraded to v5');
   await p.ctx.close();
 
   // Every page, both themes, phone viewport.

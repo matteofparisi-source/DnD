@@ -859,3 +859,40 @@ button.big { min-height: 52px; font-size: var(--fs-md); }
 .drive-strip small { flex: 1 1 10rem; min-width: 0; }
 #driveStripMsg:empty, #driveMsg:empty { margin: 0; }
 .drive-strip.is-empty { margin: 0; }
+
+/* ---- Effects: "+" breakdowns and the effects editor ---- */
+.bd-tile { position: relative; cursor: pointer; font: inherit; }
+button.rr-tile { display: block; width: 100%; color: var(--ink); font-weight: inherit; }
+button.g-tile { color: var(--ink); font-weight: inherit; }
+button.plate { display: block; width: 100%; min-height: var(--hit); cursor: pointer; font: inherit; color: var(--on-plate); }
+.bd-plus { position: absolute; top: 0; right: 4px; font-size: var(--fs-md); font-weight: 700; line-height: 1.3; color: var(--ink-2); transition: transform var(--dur) var(--ease); }
+.plate .bd-plus { color: var(--on-plate-2); }
+.bd-tile[aria-expanded="true"] { border-color: var(--ember); }
+.bd-tile[aria-expanded="true"] > .bd-plus, .bd-btn[aria-expanded="true"] > .bd-plus { transform: rotate(45deg); }
+.glance { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.glance .g-conc { grid-column: 1 / -1; }
+.bd-btn { position: static; align-self: center; font-size: var(--fs-lg); padding: 0; width: var(--hit); }
+.bd-btn .bd-plus { position: static; font-size: var(--fs-xl); line-height: 1; color: var(--ink); display: inline-block; }
+.bd-group { margin: var(--s-2) 0; }
+.bd-group:empty { display: none; }
+.bd-hero { margin: 0; }
+.bd { border: 1px dashed var(--ember); border-radius: var(--r-2); background: var(--card-2); padding: var(--s-2) var(--s-3); margin-bottom: var(--s-2); color: var(--ink); }
+.plates + .bd-group .bd, .bd-hero .bd { margin-bottom: 0; }
+.bd-title { margin: 0 0 var(--s-1); display: flex; justify-content: space-between; gap: var(--s-3); align-items: baseline; }
+.bd-total { font-size: var(--fs-lg); font-weight: 700; }
+.bd-parts { list-style: none; margin: 0; padding: 0; }
+.bd-parts li { display: flex; justify-content: space-between; gap: var(--s-3); padding: 3px 0; border-top: 1px solid var(--line); font-size: var(--fs-sm); }
+.bd-parts li > span { min-width: 0; overflow-wrap: anywhere; }
+.bd-parts li small { color: var(--ink-3); }
+.ability .ab-total { font-size: var(--fs-xs); color: var(--ink-2); }
+.ab-base { display: flex; flex-direction: column; gap: 2px; }
+.ab-base > span { font-size: var(--fs-xs); font-weight: 600; color: var(--ink-3); text-transform: uppercase; letter-spacing: .06em; }
+.fx-editor .lbl { font-size: var(--fs-xs); font-weight: 600; color: var(--ink-3); text-transform: uppercase; letter-spacing: .06em; display: block; }
+.fx-row { display: flex; flex-wrap: wrap; gap: var(--s-2); align-items: center; margin: var(--s-2) 0; padding-bottom: var(--s-2); border-bottom: 1px dashed var(--line); }
+.fx-row > select, .fx-row > input { flex: 1 1 7rem; min-width: 0; width: auto; }
+.fx-row > .fx-type { flex: 1 1 100%; }
+.fx-row > .fx-type select { width: 100%; }
+.fx-row > button.icon { flex: 0 0 var(--hit); margin-left: auto; }
+.fx-list li { flex-wrap: wrap; }
+.fx-kind { font-size: var(--fs-xs); font-weight: 600; color: var(--ink-3); text-transform: uppercase; letter-spacing: .06em; }
+.fx-listing h3 { margin-top: var(--s-3); }

@@ -1,7 +1,8 @@
 import { CONDITIONS } from './rules.js';
+import { cleanEffects } from './effects.js';
 // Persistence: everything is kept in this browser's localStorage, with JSON export/import for backups.
 export const KEY = 'dnd-companion-v1';
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 export const SNAP_KEY = 'dnd-companion-snapshots'; // up to 3 automatic local snapshots, newest first: [{ id, at, reason, data }]
 const SNAP_DAY_KEY = 'dnd-companion-snapday';      // local date (YYYY-MM-DD) of the last daily snapshot
 const SNAP_MAX = { daily: 1, rest: 1, important: 3 }; // kept per kind; eviction only within a kind
@@ -26,7 +27,7 @@ export const newFaction = (f = {}) => entry({ name: '', attitude: 'unknown', goa
 export const newQuest = (f = {}) => entry({ title: '', status: 'active', giver: '', reward: '', steps: [], ...f });
 export const cleanTag = (t) => String(t ?? '').trim().toLowerCase().replace(/\s+/g, ' ').slice(0, 40);
 export function newItem(fields = {}) {
-  const it = { id: uid(), name: '', origin: 'found', planId: '', type: 'Wondrous', rarity: 'Uncommon', needsAttune: false, attuned: false, equipped: false, charges: 0, chargesMax: 0, notes: '', qty: 1, weight: 0, acBonus: 0, ...fields };
+  const it = { id: uid(), name: '', origin: 'found', planId: '', type: 'Wondrous', rarity: 'Uncommon', needsAttune: false, attuned: false, equipped: false, charges: 0, chargesMax: 0, notes: '', qty: 1, weight: 0, acBonus: 0, effects: [], ...fields };
   ensureItemData(it);
   return it;
 }
@@ -35,6 +36,7 @@ export function ensureItemData(it) {
   it.qty = it.qty === undefined ? 1 : it.qty;
   it.weight = it.weight === undefined ? 0 : it.weight;
   it.acBonus = it.acBonus === undefined ? 0 : it.acBonus;
+  if (!Array.isArray(it.effects)) it.effects = [];
   const b = magicBonus(it.name);
   if (it.type === 'Weapon' && !it.weapon) it.weapon = newWeapon(b);
   if (it.type === 'Armor' && !it.armor) it.armor = newArmor(b);
@@ -49,7 +51,7 @@ export function defaultState() {
     version: SCHEMA_VERSION,
     character: {
       name: '', player: '', species: '', background: '', alignment: '', xp: 0, level: 1, size: 'Medium', resistances: '',
-      abilities: { str: 8, dex: 14, con: 14, int: 15, wis: 10, cha: 10 },
+      abilities: { str: 8, dex: 14, con: 14, int: 15, wis: 10, cha: 10 }, // BASE scores (feats, items and spells add on top: see effects.js)
       saveProf: { str: false, dex: false, con: true, int: true, wis: false, cha: false },
       saveBonus: 0,
       skills: {}, // skillKey -> 0 none, 1 proficient, 2 expertise
@@ -70,7 +72,8 @@ export function defaultState() {
       items: [],
       coins: { cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 },
       gear: '',
-      feats: [],          // { id, featId, level, notes }
+      feats: [],          // { id, featId, level, notes, choices: {}, effects: [] }
+      buffs: [],          // ids of non-concentration spells switched on (Longstrider, Shield...); a long rest clears them
       proficiencies: { armor: '', weapons: '', tools: '', languages: '' },
       bio: { appearance: '', personality: '', backstory: '', allies: '', notes: '' },
       voice: { personality: '', ideals: '', bonds: '', flaws: '', quirks: '', goals: [], lines: [] }, // goals: { id, text, done }; lines: { id, text }
@@ -146,6 +149,23 @@ function normalizeV4(s, data) {
   if (data && from < 4 && !c.voice.personality && str(c.bio?.personality).trim()) c.voice.personality = str(c.bio.personality);
 }
 
+// ----- schema v5: effects. Items and taken feats carry effect lists, taken feats carry choices, character.buffs lists switched-on spells.
+// Abilities stay as they were (they are the base scores now). Coerces everything, so it is safe to run again.
+function normalizeV5(c) {
+  for (const it of c.items) { it.effects = cleanEffects(it.effects); fixIds(it.effects); }
+  c.feats = (Array.isArray(c.feats) ? c.feats : []).filter(isObj);
+  for (const f of c.feats) {
+    f.effects = cleanEffects(f.effects); fixIds(f.effects);
+    const ch = isObj(f.choices) ? f.choices : {};
+    f.choices = {};
+    for (const k of Object.keys(ch)) {
+      const v = Array.isArray(ch[k]) ? ch[k].filter((x) => typeof x === 'string').slice(0, 20) : typeof ch[k] === 'string' ? ch[k] : null;
+      if (v !== null) f.choices[k.slice(0, 40)] = v;
+    }
+  }
+  c.buffs = [...new Set((Array.isArray(c.buffs) ? c.buffs : []).filter((x) => typeof x === 'string' && x).map((x) => x.slice(0, 80)))];
+}
+
 // True for a parsed backup/Drive file of this app: an object with an object `character`.
 export const isBackup = (data) => isObj(data) && isObj(data.character);
 
@@ -190,6 +210,7 @@ export function normalize(data) {
     if (it.weapon) fixIds(it.weapon.damages);
   }
   normalizeV4(s, data);
+  normalizeV5(c);
   if (!s.ui.sub || typeof s.ui.sub !== 'object' || Array.isArray(s.ui.sub)) s.ui.sub = { workshop: 'equipment', journal: 'journal', character: 'stats' };
   return s;
 }

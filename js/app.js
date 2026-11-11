@@ -9,6 +9,8 @@ import { SOURCE_LINKS, CLASS_LINK, SUBCLASS_LINK } from './data/sources.js';
 import { PLANS, PLAN_TYPES, TIERS } from './data/plans.js';
 import { FEATS, FEAT_CATEGORIES, FEAT_SOURCES } from './data/feats.js';
 import { WEAPONS, ARMOR } from './data/equipment.js';
+import { SPELL_FX } from './data/spell-fx.js';
+import { createFx, newEffect, cleanEffect, EFFECT_META, AC_CONDS, ABILITY_NAME, SKILL_NAME } from './effects.js';
 import {
   KEY, load, save, uid, normalize, defaultState, backupFile, downloadFile, newItem, newWeapon, ensureItemData,
   newNpc, newPlace, newFaction, newQuest, cleanTags, readSnaps, takeSnapshot, localDay, loadInfo, releaseSave, isBackup, SCHEMA_VERSION,
@@ -28,6 +30,7 @@ const openCards = new Set(); // open journal cards (sessions, NPCs, places, fact
 const openSpells = new Set();
 const openFilters = new Set();
 const openBlocks = new Set(); // open state of the collapsed editors on Combat
+const openBd = new Set(); // open "+" breakdowns, by key (abil:int, ac, init...)
 let jq = ''; // global journal search text
 let jtag = ''; // global journal tag filter
 const COLL_OF_TAB = { journal: 'sessions', npcs: 'npcs', places: 'places', factions: 'factions', quests: 'quests' };
@@ -60,6 +63,7 @@ function getPath(path) {
   }, state);
 }
 function setPath(path, value) {
+  dirtyFx();
   const segs = path.split('.');
   const last = segs.pop();
   const parent = getPath(segs.join('.'));
@@ -77,6 +81,7 @@ function saveNow() {
   return ok;
 }
 function persist() {
+  dirtyFx();
   releaseSave(); // a change by the user: from now on the (possibly fallback) state may be written
   clearTimeout(saveTimer);
   saveTimer = setTimeout(saveNow, 250);
@@ -96,15 +101,25 @@ function grow(ta) { ta.style.height = 'auto'; ta.style.height = `${ta.scrollHeig
 function focusBy(attr, val) { [...view.querySelectorAll(`[${attr}]`)].find((x) => x.getAttribute(attr) === val)?.focus({ preventScroll: true }); }
 
 // ---------- derived values ----------
+// Every derived number comes from effects.js (base scores + feats + equipped items + active spells + manual fields).
+// One Fx object is shared until the state changes (dirtyFx() in setPath/persist/render) or the current task ends.
+const FX_CAT = { feats: FEATS, spellFx: SPELL_FX, spells: SPELLS };
+let fxMemo = null;
+const dirtyFx = () => { fxMemo = null; };
+function FX() {
+  if (!fxMemo) { fxMemo = createFx(C(), FX_CAT); queueMicrotask(dirtyFx); }
+  return fxMemo;
+}
 const pb = () => profBonus(lvl());
-const am = (k) => mod(C().abilities[k]);
+const am = (k) => FX().am(k);
+const abilScore = (k) => FX().score(k); // total score (base + effects)
 const intMod = () => am('int');
-const saveMod = (k) => am(k) + (C().saveProf[k] ? pb() : 0) + num(C().saveBonus);
-const skillMod = (key) => am(SKILLS.find((s) => s.key === key).ability) + num(C().skills[key]) * pb();
-const spellDC = () => 8 + pb() + intMod();
-const spellAtk = () => pb() + intMod();
-const autoMaxHP = () => Math.max(1, 8 + am('con') + (lvl() - 1) * (5 + am('con')));
-const maxHP = () => (C().hp.auto ? autoMaxHP() : num(C().hp.max));
+const saveMod = (k) => FX().save(k).total;
+const skillMod = (key) => FX().skill(key).total;
+const spellDC = () => FX().dc().total;
+const spellAtk = () => FX().satk().total;
+const autoMaxHP = () => FX().hpmax(true).total;
+const maxHP = () => FX().hpmax(C().hp.auto).total;
 const hdLeft = () => Math.max(0, lvl() - num(C().hdUsed));
 
 function alwaysPrepared() {
@@ -152,38 +167,39 @@ function weaponStats(it) {
   return { hit, dmg, prof };
 }
 
-// Armor Class from equipped items (or the manual value when "auto" is off).
+// Armor Class from equipped items (or the manual value when "auto" is off). Item and spell bonuses come from effects.js.
 function acInfo() {
   const c = C();
-  if (!c.acAuto) return { ac: num(c.ac), text: '', warns: [] };
+  if (!c.acAuto) return { ac: num(c.ac), text: '', warns: [], parts: [{ label: 'Manual AC', value: num(c.ac) }] };
   const eq = equippedItems();
   eq.forEach(ensureItemData);
   const armors = eq.filter((i) => i.type === 'Armor');
   const shields = eq.filter((i) => i.type === 'Shield');
   const dex = am('dex');
-  const parts = []; // [label, value]
+  const base = []; // [{label, value}]
   const armor = armors[0];
   if (armor) {
     const a = armor.armor || {};
-    const cap = hasFeat('medium-armor-master') && num(c.abilities.dex) >= 16 ? 3 : 2; // feat cap: community sources
+    const cap = hasFeat('medium-armor-master') && abilScore('dex') >= 16 ? 3 : 2; // feat cap: community sources
     const dexPart = a.armorType === 'heavy' ? 0 : a.armorType === 'medium' ? Math.min(dex, cap) : dex;
-    parts.push([a.base || armor.name || 'Armor', num(a.baseAC) + num(a.bonus)]);
-    if (a.armorType !== 'heavy') parts.push(['DEX', dexPart]);
-  } else parts.push(['Unarmored', 10], ['DEX', dex]);
+    base.push({ label: a.base || armor.name || 'Armor', value: num(a.baseAC) + num(a.bonus) });
+    if (a.armorType !== 'heavy') base.push({ label: 'DEX', value: dexPart });
+  } else base.push({ label: 'Unarmored', value: 10 }, { label: 'DEX', value: dex });
   // Only one armor and one shield can be worn at a time (SRD 5.2.1 p.92): the first of each counts.
-  if (shields[0]) parts.push(['Shield', 2 + num(shields[0].shield?.bonus)]);
-  for (const i of eq) {
-    if (num(i.acBonus) && (!i.needsAttune || i.attuned)) parts.push([i.name || 'Item', num(i.acBonus)]);
-  }
-  if (num(c.acMisc)) parts.push(['Other', num(c.acMisc)]);
-  const ac = parts.reduce((s, p) => s + p[1], 0);
-  const text = parts.map((p, i) => (i === 0 ? `${p[0]} ${p[1]}` : `${p[1] < 0 ? '−' : '+'} ${p[0]} ${Math.abs(p[1])}`)).join(' ') + ` = ${ac}`;
+  if (shields[0]) base.push({ label: 'Shield', value: 2 + num(shields[0].shield?.bonus) });
+  const { total: ac, parts } = FX().ac(base, { armor: !!armor, shield: !!shields[0] });
+  const text = parts.map((p, i) => (i === 0 ? `${p.label} ${p.value}` : `${p.value < 0 ? '−' : '+'} ${p.label} ${Math.abs(p.value)}`)).join(' ') + ` = ${ac}`;
   const warns = [];
   if (armor?.armor?.armorType === 'heavy') warns.push("Artificers aren't trained in heavy armor (Disadvantage on D20 Tests using STR or DEX, can't cast spells).");
-  if (armor && num(armor.armor?.str) > num(c.abilities.str)) warns.push(`Speed −10 ft (needs STR ${num(armor.armor.str)}).`);
+  if (armor && num(armor.armor?.str) > abilScore('str')) warns.push(`Speed −10 ft (needs STR ${num(armor.armor.str)}).`);
   if (armor?.armor?.stealth) warns.push('Disadvantage on Stealth checks.');
   if (armors.length > 1 || shields.length > 1) warns.push('More than one armor or shield is equipped: only the first of each counts.');
-  return { ac, text, warns };
+  return { ac, text, warns, parts };
+}
+// Breakdown of one derived number: { total, parts: [{label, value, note?}] }. Same source as the number itself.
+function breakdown(key) {
+  if (key === 'ac') { const a = acInfo(); return { total: a.ac, parts: a.parts }; }
+  return FX().breakdown(key);
 }
 
 function itemEffect(it) {
@@ -215,7 +231,7 @@ function meetsReq(f) {
   const r = f.req || {};
   const c = C();
   if (r.lvl && lvl() < r.lvl) return false;
-  if (r.abil && !r.abil.some((a) => num(c.abilities[a]) >= (r.min || 13))) return false;
+  if (r.abil && !r.abil.some((a) => abilScore(a) >= (r.min || 13))) return false;
   if (r.need === 'fightingStyle' || r.need === 'heavyArmor') return false;
   if (r.need?.startsWith('species:')) {
     const sp = (c.species || '').toLowerCase();
@@ -244,19 +260,20 @@ function calc(key) {
   const c = C();
   const [kind, arg] = key.split(':');
   switch (kind) {
+    case 'abil': return String(abilScore(arg));
     case 'mod': return fmt(am(arg));
     case 'save': return fmt(saveMod(arg));
     case 'skill': return fmt(skillMod(arg));
     case 'pb': return fmt(pb());
-    case 'init': return fmt(am('dex') + num(c.initBonus));
-    case 'passive': return String(10 + skillMod('perception'));
+    case 'init': return fmt(FX().init().total);
+    case 'passive': return String(FX().passive().total);
     case 'name': return c.name || 'Unnamed Artificer';
     case 'subtitle': return [`Artificer${lvl() >= 3 ? ' (Artillerist)' : ''} ${lvl()}`, c.species].filter(Boolean).join(' · ');
     case 'hp': return `${c.hp.current}${num(c.hp.temp) ? ` +${c.hp.temp}` : ''} / ${maxHP()}`;
     case 'hpcur': return String(num(c.hp.current));
     case 'hpmax': return String(maxHP());
     case 'hptemp': return num(c.hp.temp) ? `+${num(c.hp.temp)} temp` : '';
-    case 'speed': return `${num(c.speed)} ft`;
+    case 'speed': return `${FX().speed().total} ft`;
     case 'slotleft': { const n = SLOTS[lvl() - 1][Number(arg)] || 0; return `${Math.max(0, n - num(c.slotsUsed[Number(arg)]))} / ${n}`; }
     case 'useleft': { const n = usesMax(arg); return `${Math.max(0, n - num(c.uses[arg]))} / ${n}`; }
     case 'hdleft': return `${hdLeft()} / ${lvl()}`;
@@ -291,12 +308,48 @@ function attackParts(a) {
   return { hit, dmg };
 }
 function refreshDerived() {
+  dirtyFx();
   document.querySelectorAll('[data-calc]').forEach((el) => {
     const v = calc(el.dataset.calc);
     if (el.dataset.calcAttr) el.style.setProperty(el.dataset.calcAttr, `${v}%`);
     else if (el.textContent !== v) el.textContent = v;
   });
   document.querySelectorAll('[data-show-if]').forEach((el) => { el.hidden = !calc(el.dataset.showIf); });
+  refreshBd();
+}
+
+// ---------- "+" breakdowns ----------
+// A "+" button (or a tile that is one) opens the list of parts behind a number. Open keys live in openBd; panels sit in [data-bdgroup] containers.
+const BD_SIGNED = new Set(['mod', 'save', 'skill', 'init', 'satk']); // totals shown with a sign; for the others the first part is the plain base
+const BD_TITLE = (key) => {
+  const [kind, arg] = key.split(':');
+  return {
+    abil: `${ABILITY_NAME[arg]} score`, mod: `${ABILITY_NAME[arg]} modifier`, save: `${ABILITY_NAME[arg]} saving throw`, skill: SKILL_NAME[arg] || 'Skill',
+    init: 'Initiative', speed: 'Speed', hpmax: 'Max HP', dc: 'Spell save DC', satk: 'Spell attack', passive: 'Passive Perception', ac: 'Armor Class',
+  }[kind] || key;
+};
+const bdSr = (key) => `Show how ${BD_TITLE(key)} is calculated`;
+function bdHtml(key) {
+  const b = breakdown(key);
+  const kind = key.split(':')[0];
+  const signed = BD_SIGNED.has(kind);
+  const v = (n, i) => (signed || i > 0 ? (n < 0 ? `−${Math.abs(n)}` : `+${n}`) : String(n));
+  const tot = signed ? fmt(b.total) : kind === 'speed' ? `${b.total} ft` : String(b.total);
+  return `<div class="bd" data-bdkey="${esc(key)}"><p class="bd-title"><b>${esc(BD_TITLE(key))}</b> <span class="bd-total">${esc(tot)}</span></p>
+    <ul class="bd-parts">${b.parts.map((p, i) => `<li><span>${esc(p.label)}${p.note ? ` <small>${esc(p.note)}</small>` : ''}</span><b>${esc(v(p.value, i))}</b></li>`).join('')}</ul></div>`;
+}
+const bdPanels = (keys) => keys.filter((k) => openBd.has(k)).map(bdHtml).join('');
+// Empty container that shows the open breakdowns among `keys`.
+const bdGroup = (keys, cls = '') => `<div class="bd-group ${cls}" data-bdgroup="${esc(keys.join(','))}">${bdPanels(keys)}</div>`;
+// The "+" part of a toggle: visible glyph plus a screen-reader sentence (no aria-label, so the visible text can never disagree with the name).
+const bdMark = (key) => `<span class="bd-plus" aria-hidden="true">+</span><span class="sr-only">${esc(bdSr(key))}</span>`;
+const bdBtn = (key, cls = '') => `<button class="bd-btn ${cls}" data-action="bd" data-key="${esc(key)}" data-bdbtn="${esc(key)}" aria-expanded="${openBd.has(key)}">${bdMark(key)}</button>`;
+function refreshBd() {
+  document.querySelectorAll('[data-bdgroup]').forEach((el) => {
+    const html = bdPanels(el.dataset.bdgroup.split(','));
+    if (el.innerHTML !== html) el.innerHTML = html;
+  });
+  document.querySelectorAll('[data-bdbtn]').forEach((b) => b.setAttribute('aria-expanded', String(openBd.has(b.dataset.bdbtn))));
 }
 
 // ---------- field builders ----------
@@ -439,11 +492,11 @@ function header(compact = false) {
   const plates = `
     <div class="plates ${compact ? '' : 'four'}" role="group" aria-label="Key stats">
       ${compact ? `<div class="plate plate-hp"><small>HP</small><b>${calcSpan('hp')}</b><i class="bar" data-calc="hpPct" data-calc-attr="--pct" style="--pct:${calc('hpPct')}%"></i></div>` : ''}
-      <div class="plate"><small>AC</small><b>${calcSpan('ac')}</b></div>
+      <button class="plate bd-tile" data-action="bd" data-key="ac" data-bdbtn="ac" aria-expanded="${openBd.has('ac')}"><small>AC</small><b>${calcSpan('ac')}</b><span class="bd-plus" aria-hidden="true">+</span><span class="sr-only">${esc(bdSr('ac'))}</span></button>
       <div class="plate"><small>Prof</small><b>${calcSpan('pb')}</b></div>
       <div class="plate"><small>Spell DC</small><b>${calcSpan('dc')}</b></div>
       <div class="plate"><small>Spell atk</small><b>${calcSpan('satk')}</b></div>
-    </div>`;
+    </div>${bdGroup(['ac'], 'bd-hero')}`;
   if (compact) {
     return `
   <header class="hero compact">
@@ -506,6 +559,41 @@ function applyBodyFx() {
   if (e > 0) cl.add(`exh-${e}`);
 }
 
+// Read-only list of what feats, equipped items and active spells grant (resistances, senses, other speeds...), each with its source.
+function fxItems() {
+  const L = FX().listings();
+  const rows = [['Resistance', L.resist], ['Immunity', L.immune], ['Condition immunity', L.condImmune], ['Senses', L.sense], ['Other speeds', L.speeds], ['Proficiencies', L.prof], ['Reminders', L.note]];
+  return rows.flatMap(([title, arr]) => arr.map((x) => `<li><span class="fx-kind">${title}</span> <b>${esc(x.text)}</b> <small class="muted">${esc(x.sources.join(', '))}</small></li>`)).join('');
+}
+function fxListing() {
+  const items = fxItems();
+  return items ? `<div class="fx-listing"><h3>From feats, items and spells</h3><ul class="list fx-list">${items}</ul></div>` : '';
+}
+
+// Editor for a list of effects (item Edit blocks, taken feats). `path` is the list's data path; rows bind to it like any other field.
+const fxOptions = (m) => (m.target === 'free' ? null : m.target.map((k) => [k, ABILITY_NAME[k] || SKILL_NAME[k] || (k === 'all' ? 'All saves' : k[0].toUpperCase() + k.slice(1))]));
+function fxRow(path, e) {
+  const m = EFFECT_META[e.type];
+  const rm = `<button class="icon danger" data-action="removeEffect" data-path="${esc(path)}" data-id="${esc(e.id)}" aria-label="Remove effect: ${esc(m ? m.label : e.type)}">✕</button>`;
+  if (!m) return `<div class="fx-row"><span class="grow muted">${esc(e.type)} (from the feat's data; edited elsewhere)</span>${rm}</div>`;
+  const p = `${path}.#${e.id}`;
+  const sel = (field, opts, aria, extra = '') => `<select data-bind="${esc(p)}.${field}" aria-label="${aria}" ${extra}>${opts.map(([v, t]) => `<option value="${esc(v)}" ${String(v) === String(e[field] ?? '') ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select>`;
+  const parts = [`<div class="fx-type">${sel('type', Object.keys(EFFECT_META).map((k) => [k, EFFECT_META[k].label]), 'Effect type', 'data-fxtype data-rerender')}</div>`];
+  if (Array.isArray(m.target)) parts.push(sel('target', fxOptions(m), 'Effect target'));
+  else if (m.target === 'free') parts.push(input(`${p}.target`, { aria: 'Damage type', placeholder: 'Damage type', list: 'dl-dmg' }));
+  if (m.value === 'num') parts.push(input(`${p}.value`, { type: 'number', aria: 'Effect value' }));
+  else if (m.value) parts.push(input(`${p}.value`, { aria: 'Effect value', placeholder: m.value === 'numpb' ? 'N or pb' : 'N or walk' }));
+  if (m.cond) parts.push(sel('cond', AC_CONDS, 'Applies when'));
+  if (m.text) parts.push(input(`${p}.text`, { aria: 'Effect text', placeholder: e.type === 'note' ? 'Short reminder' : 'Text' }));
+  if (e.type === 'ability') parts.push(input(`${p}.max`, { type: 'number', aria: 'Score cap (blank = 20)', placeholder: 'Cap 20' }));
+  if (m.perLevel) parts.push(input(`${p}.hpPerLevel`, { type: 'number', aria: 'Extra max HP per level', placeholder: 'Per level' }));
+  return `<div class="fx-row">${parts.join('')}${rm}</div>`;
+}
+function fxEditor(path, list, hint) {
+  return `<div class="fx-editor subbox"><span class="lbl">Effects</span>${hint ? `<p class="hint">${esc(hint)}</p>` : ''}${(list || []).map((e) => fxRow(path, e)).join('')}<button class="ghost small" data-action="addEffect" data-path="${esc(path)}">+ Add effect</button></div>`;
+}
+const ITEM_FX_HINT = 'Counted while the item is equipped (and attuned, if it requires attunement). The "+" on each number shows them.';
+
 // ----- Stats
 function tabStats() {
   const c = C();
@@ -513,14 +601,17 @@ function tabStats() {
     <div class="ability ${a.key === 'int' ? 'key' : ''}">
       <span class="ab-name">${a.short}</span>
       <span class="ab-mod">${calcSpan(`mod:${a.key}`)}</span>
-      ${input(`character.abilities.${a.key}`, { type: 'number', aria: `${a.name} score`, min: 1, max: 30, rerender: a.key === 'int' || a.key === 'con' })}
+      <span class="ab-total">Score ${calcSpan(`abil:${a.key}`)}</span>
+      <label class="ab-base"><span>Base</span>${input(`character.abilities.${a.key}`, { type: 'number', aria: `${a.name} base score`, min: 1, max: 30, rerender: a.key === 'int' || a.key === 'con' })}</label>
+      ${bdBtn(`abil:${a.key}`)}
     </div>`).join('');
   const saves = ABILITIES.map((a) => `
     <li>${check(`character.saveProf.${a.key}`, '', { title: `${a.name} saving throw proficiency` })}<span class="grow">${a.name}${['con', 'int'].includes(a.key) ? ' <small class="muted">class</small>' : ''}</span>${calcSpan(`save:${a.key}`, 'val')}</li>`).join('');
   const chosen = SKILL_CHOICES.filter((k) => num(c.skills[k]) > 0).length;
   const skills = SKILLS.map((s) => {
-    const l = num(c.skills[s.key]);
-    const label = ['Not proficient', 'Proficient', 'Expertise'][l];
+    const info = FX().skillInfo(s.key);
+    const l = info.level;
+    const label = `${['Not proficient', 'Proficient', 'Expertise'][l]}${info.from ? ` (from ${info.from.src.name})` : ''}`;
     const cls = SKILL_CHOICES.includes(s.key) ? '<small class="flag prepared mini" title="Artificer skill choice">A</small>' : '';
     return `<li>
       <button class="prof p${l}" data-action="cycleSkill" data-key="${s.key}" title="${label} (tap to change)" aria-label="${s.name}: ${label}"></button>
@@ -553,15 +644,16 @@ function tabStats() {
 
   <section class="card">
     <h2>Ability scores</h2>
-    <p class="hint">Intelligence is your spellcasting ability: it drives spell DC, spell attacks, cannon temp HP and Flash of Genius.</p>
+    <p class="hint">Intelligence is your spellcasting ability: it drives spell DC, spell attacks, cannon temp HP and Flash of Genius. The box is your <b>base</b> score; feats, equipped items and active spells add to it (tap + to see how).</p>
     <div class="abilities">${abilities}</div>
+    ${bdGroup(ABILITIES.map((a) => `abil:${a.key}`))}
   </section>
 
   <div class="two-col">
     <section class="card">
       <h2>Saving throws</h2>
       <ul class="list big-val">${saves}</ul>
-      ${input('character.saveBonus', { label: 'Bonus to all saves (e.g. Cloak of Protection)', type: 'number', cls: 'wide' })}
+      ${input('character.saveBonus', { label: 'Manual bonus to all saves (items can carry their own effects)', type: 'number', cls: 'wide' })}
       <h2>Senses</h2>
       <ul class="list"><li><span class="grow">Passive Perception</span>${calcSpan('passive', 'val')}</li></ul>
       <h2>Proficiencies</h2>
@@ -571,6 +663,7 @@ function tabStats() {
       ${input('character.proficiencies.languages', { label: 'Languages', cls: 'wide' })}
       ${input('character.proficiencies.armor', { label: 'Other proficiencies (species, background, feats)', cls: 'wide' })}
       ${textarea('character.resistances', { label: 'Resistances (damage types, conditions…)', rows: 2 })}
+      ${fxListing()}
     </section>
     <section class="card">
       <h2>Skills</h2>
@@ -599,15 +692,40 @@ function damageEditor(path, damages) {
   return `<div class="dmg-editor"><span class="lbl">Damage</span>${rows}<button class="ghost small" data-action="addDamage" data-path="${esc(path)}.damages">+ Add damage</button></div>`;
 }
 
-// Initiative, Speed and the concentration plate under the header (AC and Prof are already in the header plates).
+// Initiative, Speed, Max HP and the concentration plate under the header (AC and Prof are already in the header plates).
+// A tile that has a breakdown is a button: tap it to open the "+" list below.
+function bdTile(key, label, calcKey, cls = 'g-tile') {
+  return `<button class="${cls} bd-tile" data-action="bd" data-key="${esc(key)}" data-bdbtn="${esc(key)}" aria-expanded="${openBd.has(key)}"><small>${label}</small><b>${calcSpan(calcKey)}</b><span class="bd-plus" aria-hidden="true">+</span><span class="sr-only">${esc(bdSr(key))}</span></button>`;
+}
 function glance() {
   const c = C();
   const conc = c.concentration?.name;
   return `
   <section class="glance" aria-label="At a glance">
     <div class="g-tile"><small>Initiative</small><b>${calcSpan('init')}</b></div>
-    <div class="g-tile"><small>Speed</small><b>${calcSpan('speed')}</b></div>
+    ${bdTile('speed', 'Speed', 'speed')}
+    ${bdTile('hpmax', 'Max HP', 'hpmax')}
     <button class="g-conc ${conc ? 'on' : ''}" data-action="sheet" data-kind="conc"><small>Concentration</small><b>${conc ? esc(conc) : 'None'}</b></button>
+  </section>${bdGroup(['speed', 'hpmax'], 'bd-glance')}`;
+}
+
+// Spell effects: the concentration spell applies by itself; non-concentration buffs (Shield, Longstrider, Aid...) get an Active switch.
+const buffSpells = () => SPELLS.filter((s) => SPELL_FX[s.id] && !s.flags.includes('C') && (spellStatus(s) !== 'none' || C().buffs.includes(s.id)));
+function spellFxCard() {
+  const c = C();
+  const buffs = buffSpells();
+  const concFx = c.concentration?.name && SPELL_FX[c.concentration.id];
+  if (!buffs.length && !concFx) return '';
+  const rows = buffs.map((s) => {
+    const on = c.buffs.includes(s.id);
+    return `<li><span class="res-info"><span class="res-name">${esc(s.name)}</span><small class="muted">${esc(SPELL_FX[s.id].note || '')}</small></span><button class="tog" data-action="toggleBuff" data-id="${esc(s.id)}" aria-pressed="${on}">${on ? 'Active' : 'Off'}<span class="sr-only"> ${esc(s.name)}</span></button></li>`;
+  }).join('');
+  const conc = concFx ? `<p class="hint"><b>${esc(c.concentration.name)}</b> is applied while you concentrate: ${esc(SPELL_FX[c.concentration.id].note || '')}</p>` : '';
+  return `
+  <section class="card">
+    <h2>Active spell effects</h2>
+    <p class="hint">Switch on a spell you cast on yourself and its numbers join your sheet (tap + on a number to see them). A long rest switches them all off. Effects are taken from the SRD text and assume you are the target.</p>
+    ${conc}<ul class="list res-list">${rows}</ul>
   </section>`;
 }
 
@@ -639,8 +757,8 @@ function resourcesCard() {
 function rollReference() {
   const c = C();
   const tile = (label, key, mark = false, on = false) =>
-    `<div class="rr-tile"><small>${label}${mark ? `<i class="pmark ${on ? 'on' : ''}" aria-hidden="true"></i>${on ? '<span class="sr"> proficient</span>' : ''}` : ''}</small><b>${calcSpan(key)}</b></div>`;
-  const saves = ABILITIES.map((a) => tile(`${a.short} save`, `save:${a.key}`, true, !!c.saveProf[a.key])).join('');
+    `<button class="rr-tile bd-tile" data-action="bd" data-key="${esc(key)}" data-bdbtn="${esc(key)}" aria-expanded="${openBd.has(key)}"><small>${label}${mark ? `<i class="pmark ${on ? 'on' : ''}" aria-hidden="true"></i>${on ? '<span class="sr"> proficient</span>' : ''}` : ''}</small><b>${calcSpan(key)}</b><span class="bd-plus" aria-hidden="true">+</span><span class="sr-only">${esc(bdSr(key))}</span></button>`;
+  const saves = ABILITIES.map((a) => tile(`${a.short} save`, `save:${a.key}`, true, !!FX().save(a.key).parts.some((p) => p.label === 'Proficiency' || p.note?.includes('proficiency')))).join('');
   const weapons = equippedItems().filter((i) => i.type === 'Weapon').map((i) => ({ name: i.name || i.weapon?.base || 'Weapon', hit: `iatk:${i.id}`, dmg: `idmg:${i.id}` }));
   const custom = c.attacks.map((a) => ({ name: a.name || 'Attack', hit: `atk:${a.id}`, dmg: `dmg:${a.id}` }));
   const rows = [...weapons, ...custom].map((a) => `
@@ -650,6 +768,7 @@ function rollReference() {
     <h2>Roll reference</h2>
     <p class="hint">Add these to your d20. A dot marks a proficient saving throw.</p>
     <div class="rr-grid">${tile('Initiative', 'init')}${tile('Spell attack', 'satk')}${tile('Spell save DC', 'dc')}${saves}</div>
+    ${bdGroup(['init', 'satk', 'dc', ...ABILITIES.map((a) => `save:${a.key}`)])}
     <h3>Attacks</h3>
     <ul class="list rr-atks">${rows || '<li class="muted">No weapon is equipped and no custom attack exists. Add one under Edit attacks.</li>'}</ul>
   </section>`;
@@ -791,18 +910,18 @@ function tabCombat() {
       ${c.hp.auto ? `<div class="field"><span>Max (auto)</span><div class="static">${calcSpan('autoHP')}</div></div>` : input('character.hp.max', { label: 'Max HP', type: 'number', min: 1 })}
       ${input('character.hp.temp', { label: 'Temporary HP', type: 'number', min: 0 })}
     </div>
-    ${check('character.hp.auto', 'Calculate max HP (8 + CON at level 1, then 5 + CON per level)', { rerender: true })}
+    ${check('character.hp.auto', 'Calculate max HP (8 + CON at level 1, then 5 + CON per level, plus effects like Tough)', { rerender: true })}
     <h3>Armor Class</h3>
     <p class="ac-line"><span class="ac-big">AC ${calcSpan('ac')}</span> <small class="muted" data-calc="acText">${esc(calc('acText'))}</small></p>
     ${ai.warns.map((w) => `<p class="warn">${esc(w)}</p>`).join('')}
     ${check('character.acAuto', 'Auto AC from equipment', { rerender: true })}
     ${c.acAuto ? '' : '<p class="hint">Turn on Auto AC to calculate it from your equipped armor and shield.</p>'}
     <div class="grid">
-      ${c.acAuto ? input('character.acMisc', { label: 'Other AC bonus', type: 'number' }) : input('character.ac', { label: 'Armor Class', type: 'number' })}
-      ${input('character.speed', { label: 'Speed (ft)', type: 'number' })}
-      ${input('character.initBonus', { label: 'Init bonus', type: 'number' })}
+      ${c.acAuto ? input('character.acMisc', { label: 'Manual AC bonus', type: 'number' }) : input('character.ac', { label: 'Armor Class', type: 'number' })}
+      ${input('character.speed', { label: 'Base speed (ft)', type: 'number' })}
+      ${input('character.initBonus', { label: 'Manual init bonus', type: 'number' })}
     </div>
-    <p class="hint">Initiative ${calcSpan('init')} (DEX + bonus; Alert feat: add your Proficiency Bonus).</p>`;
+    <p class="hint">Initiative ${calcSpan('init')} (DEX + bonuses; Alert feat: add your Proficiency Bonus as an effect on the feat). Feats, equipped items and active spells add to these numbers automatically.</p>`;
   const atk = `
     <h3>From equipment</h3>
     ${equipmentAttacks()}
@@ -814,6 +933,7 @@ function tabCombat() {
   ${zero ? deathCard(true) : ''}
   ${glance()}
   ${condRow()}
+  ${spellFxCard()}
   ${resourcesCard()}
   ${rollReference()}
   ${cannonPanel()}
@@ -1128,6 +1248,7 @@ function itemEdit(i, kind) {
     </div>
     <div class="row">${needsAttuneCheck(i)}</div>
     ${textarea(`${p}.notes`, { rows: 2, placeholder: 'What it does, command words, where you found it…' })}
+    ${fxEditor(`${p}.effects`, i.effects, ITEM_FX_HINT)}
     <div class="row">${del}</div>`;
   }
   return `
@@ -1143,6 +1264,7 @@ function itemEdit(i, kind) {
       ${input(`${p}.acBonus`, { label: 'AC bonus while equipped', type: 'number', cls: 'xs' })}
     </div>
     ${textarea(`${p}.notes`, { rows: 2, placeholder: 'Notes, command words, where you found it…' })}
+    ${fxEditor(`${p}.effects`, i.effects, ITEM_FX_HINT)}
     <div class="row">${del}</div>`;
 }
 
@@ -1208,7 +1330,7 @@ function coinsCard() {
 
 function tabEquipment() {
   const w = carriedWeight();
-  const cap = num(C().abilities.str) * 15;
+  const cap = abilScore('str') * 15;
   const eq = equippedItems().length;
   return `
   <section class="card">
@@ -1311,7 +1433,11 @@ function featsList() {
           ${input(`character.feats.#${t.id}.level`, { label: 'Taken at level', type: 'number', min: 1, max: 20, cls: 'xs' })}
           ${input(`character.feats.#${t.id}.notes`, { label: 'Choices (ability +1, spells, skills…)', cls: 'grow' })}
           <button class="icon danger" data-action="dropFeat" data-id="${esc(t.id)}" title="Remove" aria-label="Remove feat ${esc(ft.name)}">✕</button>
-        </div>`).join('')}
+        </div>
+        <details class="edit" data-block="fx-${esc(t.id)}" data-lazy="fx:${esc(t.id)}" ${openBlocks.has(`fx-${t.id}`) ? 'open' : ''}>
+          <summary>Effects${(t.effects || []).length ? ` (${t.effects.length})` : ''}<span class="sr-only"> of ${esc(ft.name)}</span></summary>
+          ${openBlocks.has(`fx-${t.id}`) ? `<div class="lazy-body">${fxEditor(`character.feats.#${t.id}.effects`, t.effects, 'Numbers this feat changes: they join your sheet automatically.')}</div>` : ''}
+        </details>`).join('')}
     </div>`;
   }).join('');
 }
@@ -1350,7 +1476,7 @@ function tabSelected() {
   }).join('');
   const attunedOnly = c.items.filter((i) => i.attuned && !i.equipped).map((i) => `<span class="pill always">${esc(i.name || 'Unnamed item')} <small>attuned</small></span>`).join('');
   const feats = c.feats.map((t) => { const ft = featById(t.featId); return `<span class="pill">${esc(ft?.name || t.featId)} <small>L${esc(t.level)}</small></span>`; }).join('');
-  const skills = SKILLS.filter((s) => num(c.skills[s.key])).map((s) => `<span class="pill ${num(c.skills[s.key]) > 1 ? 'always' : ''}">${s.name} ${calcSpan(`skill:${s.key}`)}${num(c.skills[s.key]) > 1 ? ' <small>expertise</small>' : ''}</span>`).join('');
+  const skills = SKILLS.filter((s) => FX().skillInfo(s.key).level).map((s) => `<span class="pill ${FX().skillInfo(s.key).level > 1 ? 'always' : ''}">${s.name} ${calcSpan(`skill:${s.key}`)}${FX().skillInfo(s.key).level > 1 ? ' <small>expertise</small>' : ''}</span>`).join('');
   const conc = c.concentration?.name;
   const conds = c.conditions.map((x) => `<span class="pill always">${esc(x)}</span>`).join('');
   const exh = num(c.exhaustion) ? `<span class="pill always">Exhaustion ${num(c.exhaustion)}</span>` : '';
@@ -1364,13 +1490,15 @@ function tabSelected() {
   ${section('Right now', 'combat', '', `
     <div class="sel-stats"><span class="counter">AC <b>${acInfo().ac}</b></span><span class="counter">Prof <b>${fmt(pb())}</b></span><span class="counter">Spell DC <b>${spellDC()}</b></span><span class="counter">Spell atk <b>${fmt(spellAtk())}</b></span></div>
     <div class="sel-group"><span class="muted">Concentration</span> ${conc ? `<span class="pill always">${esc(conc)}</span>` : '<span class="muted">none</span>'}</div>
-    <div class="sel-group"><span class="muted">Conditions</span> ${conds || exh ? `${conds}${exh}` : '<span class="muted">none</span>'}</div>`)}
+    <div class="sel-group"><span class="muted">Conditions</span> ${conds || exh ? `${conds}${exh}` : '<span class="muted">none</span>'}</div>
+    ${c.buffs.length ? `<div class="sel-group"><span class="muted">Spell effects</span> ${c.buffs.map((id) => `<span class="pill always">${esc(SPELLS.find((x) => x.id === id)?.name || id)}</span>`).join('')}</div>` : ''}`)}
   ${section('Spells', 'spells', `${counter(preparedCount(), at(PREPARED, lvl()), 'Prepared')} ${counter(cantripCount(), at(CANTRIPS, lvl()), 'Cantrips')}`,
     byLevel && `${byLevel}<p class="hint"><span class="pill always">Always prepared</span> <span class="pill prepared">Prepared / known</span> C = Concentration, R = Ritual</p>`, 'mine')}
   ${lvl() >= 2 ? section('Known plans', 'plans', counter(knownPlans().length, at(PLANS_KNOWN, lvl()), 'Known'), plans && `<div class="sel-group">${plans}</div>`) : ''}
   ${section('Equipped and attuned', 'equipment', `<span class="counter">Equipped <b>${equippedItems().length}</b></span>${counter(attunedCount(), attunementLimit(lvl()), 'Attuned')}`, (equipped || attunedOnly) && `<div class="sel-group">${equipped}${attunedOnly}</div>`)}
   ${section('Feats', 'feats', counter(c.feats.length, featSlots(), 'Taken'), feats && `<div class="sel-group">${feats}</div>`)}
-  ${section('Skills', 'stats', '', skills && `<div class="sel-group">${skills}</div>`)}`;
+  ${section('Skills', 'stats', '', skills && `<div class="sel-group">${skills}</div>`)}
+  ${fxItems() ? section('Granted by effects', 'stats', '', `<ul class="list fx-list">${fxItems()}</ul>`) : ''}`;
 }
 
 // ----- Journal
@@ -1660,6 +1788,7 @@ const RENDER = { stats: tabStats, combat: tabCombat, equipment: tabEquipment, sp
 const LIST_RENDER = { equipment: equipmentList, spells: spellsList, plans: plansList, items: itemsList, feats: featsList, journal: () => jList('sessions'), npcs: () => jList('npcs'), places: () => jList('places'), factions: () => jList('factions'), quests: () => jList('quests') };
 
 function render() {
+  dirtyFx();
   applyTheme();
   const tab = RENDER[state.ui.tab] ? state.ui.tab : 'combat';
   const sec = sectionOf(tab);
@@ -1878,6 +2007,8 @@ function applyRest(c, kind, { clearConds = false, rolls = [] } = {}) {
     else if (lvl() >= 14) c.uses.flash = Math.max(0, num(c.uses.flash) - 1); // Refreshed Genius
     return;
   }
+  c.buffs = []; // spell effects switched on by hand end with the rest (before HP, so Aid's bonus is gone)
+  dirtyFx();
   c.hp.current = maxHP();
   c.hp.temp = 0;
   c.hdUsed = 0;
@@ -1905,6 +2036,7 @@ function restSummary(kind, opts) {
     const y = Math.max(0, max - num(a.uses[k]));
     if (x !== y) lines.push(`${USES[k].name} ${x}→${y}`);
   }
+  if (b.buffs.length && !a.buffs.length) lines.push(`Spell effects ended (${b.buffs.map((id) => SPELLS.find((s) => s.id === id)?.name || id).join(', ')})`);
   if (b.cannons.length && !a.cannons.length) lines.push(`${b.cannons.length === 1 ? 'Cannon' : 'Cannons'} removed`);
   if (num(b.exhaustion) !== num(a.exhaustion)) lines.push(`Exhaustion ${num(b.exhaustion)} → ${num(a.exhaustion)}`);
   if ((num(b.deathSaves.success) || num(b.deathSaves.fail)) && !(num(a.deathSaves.success) || num(a.deathSaves.fail))) lines.push('Death saves reset');
@@ -2368,6 +2500,29 @@ const actions = {
     const list = getPath(path);
     if (Array.isArray(list)) mutate(() => { setPath(path, getPath(path).filter((x) => x.id !== el.dataset.id)); });
   },
+  addEffect: (el) => {
+    const path = el.dataset.path;
+    if (Array.isArray(getPath(path))) mutate(() => { getPath(path).push({ ...newEffect('ac'), id: uid() }); }, { msg: 'Effect added' });
+  },
+  removeEffect: (el) => {
+    const path = el.dataset.path;
+    if (Array.isArray(getPath(path))) mutate(() => { setPath(path, getPath(path).filter((x) => x.id !== el.dataset.id)); }, { msg: 'Effect removed' });
+  },
+  bd: (el) => {
+    const k = el.dataset.key;
+    if (openBd.has(k)) openBd.delete(k); else openBd.add(k);
+    refreshBd();
+  },
+  toggleBuff: (el) => {
+    const s = SPELLS.find((x) => x.id === el.dataset.id);
+    if (!s) return;
+    const on = !C().buffs.includes(s.id);
+    mutate(() => {
+      C().buffs = on ? [...C().buffs, s.id] : C().buffs.filter((x) => x !== s.id);
+      dirtyFx();
+      C().hp.current = Math.min(num(C().hp.current), maxHP()); // a lower max HP (Aid ending) caps current HP
+    }, { msg: `${s.name} ${on ? 'active' : 'ended'}`, sub: on ? SPELL_FX[s.id]?.note || '' : '' });
+  },
   removeAttack: (el) => {
     const a = C().attacks.find((x) => x.id === el.dataset.id);
     mutate(() => { C().attacks = C().attacks.filter((x) => x.id !== el.dataset.id); }, { msg: `Deleted ${a?.name ? `"${a.name}"` : 'attack'}` });
@@ -2494,7 +2649,7 @@ const actions = {
   takeFeat: (el) => {
     const ft = featById(el.dataset.id);
     if (!ft) return;
-    const apply = () => mutate(() => { C().feats.push({ id: uid(), featId: ft.id, level: lvl(), notes: '' }); }, { msg: `Took ${ft.name}` });
+    const apply = () => mutate(() => { C().feats.push({ id: uid(), featId: ft.id, level: lvl(), notes: '', choices: {}, effects: [] }); }, { msg: `Took ${ft.name}` });
     if (meetsReq(ft)) return apply();
     confirmSheet(el, { title: 'Prerequisite not met', text: `You don't seem to meet the prerequisite (${reqText(ft)}). Take ${ft.name} anyway?`, ok: 'Take anyway', run: apply });
   },
@@ -2705,6 +2860,17 @@ document.addEventListener('keydown', (e) => {
     else if (e.key === 'Backspace') actions.kp({ dataset: { k: 'back' } });
   }
 });
+// Changing an effect's type keeps what still fits and fills in the new type's starting values.
+function retypeEffect(bindPath) {
+  const e = getPath(bindPath.replace(/\.type$/, ''));
+  const m = e && EFFECT_META[e.type];
+  const next = m && cleanEffect(e);
+  if (!next) return;
+  if (m.value && !next.value && m.def.value) next.value = m.def.value;
+  if (m.text && !next.text && m.def.text) next.text = m.def.text;
+  for (const k of Object.keys(e)) delete e[k];
+  Object.assign(e, next);
+}
 function readValue(el) {
   if (el.dataset.type === 'bool') return el.checked;
   if (el.dataset.type === 'number') return el.value === '' ? 0 : num(el.value);
@@ -2735,6 +2901,7 @@ view.addEventListener('input', (e) => {
   const before = maxHP();
   const wasFull = num(C().hp.current) >= before;
   setPath(el.dataset.bind, readValue(el));
+  if (el.dataset.fxtype !== undefined) retypeEffect(el.dataset.bind);
   touch(el.dataset.bind);
   if (el.dataset.grow !== undefined) grow(el);
   // Leveling up or raising CON while at full HP keeps you at full HP.
@@ -2759,6 +2926,7 @@ const LAZY = {
   spell: (id) => { const sp = SPELLS.find((x) => x.id === id); return sp ? spellBody(sp) : ''; },
   equip: (id) => { const it = C().items.find((x) => x.id === id); return it ? itemEdit(it, 'equip') : ''; },
   magic: (id) => { const it = C().items.find((x) => x.id === id); return it ? itemEdit(it, 'magic') : ''; },
+  fx: (id) => { const t = C().feats.find((x) => x.id === id); return t ? fxEditor(`character.feats.#${t.id}.effects`, t.effects, 'Numbers this feat changes: they join your sheet automatically.') : ''; },
 };
 view.addEventListener('toggle', (e) => {
   const t = e.target;

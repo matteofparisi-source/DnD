@@ -85,6 +85,8 @@ export async function run(env, t) {
   await p.evaluate(() => { window.__tokenTtl = 3599; });
   await p.click('#driveStrip .drive-btn');
   await until(p, () => !document.querySelector('#driveStrip .drive-btn'));
+  // The button hides as soon as the token arrives; the upload follows asynchronously, so wait for it.
+  await poll(() => fake.puts() > n0); await sleep(400);
   t.ok(fake.puts() === n0 + 1 && JSON.parse(fake.save().content).character.name === 'After expiry', 'tap -> token -> sync');
   p.reqs.length = 0; await p.reload(); await p.waitForSelector('#driveStrip .drive-btn');
   t.ok(await rat(p) === 0 && !p.reqs.some((u) => /accounts\.google\.com/.test(u)), 'after reload: button shown, no automatic sign-in, Google script not loaded');
