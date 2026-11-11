@@ -78,6 +78,10 @@ This work includes material from the System Reference Document 5.2.1 ("SRD 5.2.1
 
 Fonts Source Sans 3 and IM Fell English SC are used under the SIL Open Font License 1.1 (see `fonts/OFL-*.txt`).
 
+## Tests
+
+For contributors: `node tests/unit.mjs` (fast, Node only) and `node tests/run.mjs` (browser suites). Install once with `npm i -g playwright && npx playwright install chromium`. See `tests/README.md`.
+
 ## Project layout
 
 ```

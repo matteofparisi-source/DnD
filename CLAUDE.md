@@ -14,10 +14,10 @@ Target devices: Android (Redmi 15, Chrome) and Windows 10/11 (Edge/Chrome). READ
 
 ## Run and check locally
 - Serve the repo root: `python3 -m http.server 8000`, then open http://localhost:8000. Opening `index.html` via `file://` fails (ES modules; the service worker isn't registered on `file:`).
-- There is **no automated test suite** in the repo and no package.json. Checks used so far:
-  - Syntax: `node --check js/app.js` (works for each JS file).
-  - Data modules load: `node -e "import('./js/data/spells.js').then(m => console.log(m.SPELLS.length))"`. The same pattern works for `feats.js` (`FEATS`) and `plans.js` (`PLANS`).
-  - Behavior: Playwright scripts (`require('playwright')`, phone viewport such as Pixel 7, plus 1366×768), kept outside the repo. Seed localStorage with `page.addInitScript`: the app saves its in-memory state on `pagehide`, so data seeded after load is overwritten on reload.
+- Tests live in `tests/` (no package.json; Playwright is resolved from the environment). Details in `tests/README.md`.
+  - `node tests/unit.mjs`: pure Node, ~1 s: syntax of all scripts, data integrity, `APP_VERSION` == `CACHE`, `ASSETS` coverage, manifest/icon sizes, `normalize()` migrations, snapshots.
+  - `node tests/run.mjs [--only name] [--headed] [--list]`: unit plus 11 Playwright suites in `tests/e2e/` (own static server, Pixel 7 plus one 1366x768 check, stubbed Drive, update banner, offline, a11y; ~75 s). axe-core is used only if installed.
+  - Run both before every commit; add a test in `tests/e2e/` for a new feature. Seed localStorage with `page.addInitScript` (the app saves on `pagehide`).
 
 ## Hosting
 - Live at https://matteofparisi-source.github.io/DnD/ (GitHub Pages, branch `ccr-99717c64-lm0jqw`, root folder). **Every push to that branch goes live** within about a minute.
@@ -47,6 +47,7 @@ Target devices: Android (Redmi 15, Chrome) and Windows 10/11 (Edge/Chrome). READ
 - `js/data/equipment.js`: `WEAPONS` and `ARMOR` catalogs (armor has `str` and `stealth`) (SRD 5.2.1 tables, checked). Picking one in the Equipment tab prefills the item.
 - `css/styles.css`: one file. Design tokens come first and are the single source of truth: colors (`--bg`, `--card`, `--ink*`, `--brass*`, `--ember*`, `--blueprint`...) in `:root` (dark, default) and `:root[data-theme="light"]` (paper); space `--s-*`, radius `--r-*`, type `--fs-*`, shadow, motion. Use tokens, not literals. "Artificer's Field Journal" look: blueprint grid, riveted cards, brass plates, ember only for active/magic/condition states. No raster textures: gradients and inline SVG only. Fonts are self-hosted via `@font-face`.
 - `fonts/`: latin woff2 subsets: Source Sans 3 (variable, body/UI) and IM Fell English SC (display: h1/h2 only), OFL licenses in `OFL-*.txt`. Both woff2 files are in `sw.js` `ASSETS`; the body font is preloaded in `index.html`.
+- `tests/`: `run.mjs` runner + server, `unit.mjs`, `lib.mjs`/`drive-fake.mjs` helpers, `e2e/NN-*.mjs` suites (not loaded by the app, not in `ASSETS`).
 - `sw.js`: offline cache. `js/version.js`: `APP_VERSION` (shown in Campaign & data > About). `manifest.webmanifest` + `icons/` (192, 512, `icon-maskable-512.png` with safe-zone padding): install metadata.
 
 ## State and data
@@ -120,7 +121,7 @@ Target devices: Android (Redmi 15, Chrome) and Windows 10/11 (Edge/Chrome). READ
 ## Known weak spots
 - With network-first + skipWaiting, an open page can lazy-import a newer `spell-details.js` / `drive.js` than its running `app.js` until it reloads; the update banner (and the 30-minute `registration.update()` on return to the app) mitigates it.
 - `js/app.js` is large (about 3150 lines) and mixes views, logic and actions. Splitting it (e.g. one module per tab) is reasonable, but **only do it when the user asks**.
-- No automated tests in the repo; checks are manual or ad-hoc Playwright.
+- Tests are not run in CI; run `node tests/run.mjs` locally. Not covered: real Google account, real devices.
 - Data lives per device and browser; the only sync is the optional Google Drive mirror (otherwise export/import).
 - `confirm()`/`alert()` remain only for Delete everything and the import-failed alert; everything else (including the import confirmation) uses sheets. Casting-time tags depend on the lazy-loaded details, so the Spells list shows "Loading spell details…" briefly on first visit.
 

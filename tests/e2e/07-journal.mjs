@@ -89,8 +89,10 @@ export async function run(env, t) {
   await p.selectOption('.jcard[open] select', 'hostile');
   await p.waitForFunction(() => /Hostile/.test(document.querySelector('.jcard[open] > summary').textContent));
   await p.fill('.jcard[open] [data-bind$=".name"]', 'Renamed NPC');
-  st = await saved(p);
-  t.ok(st.journal.npcs.some((n) => n.name === 'Renamed NPC' && n.updatedAt > n.createdAt), 'edit saved and updatedAt bumped');
+  for (let i = 0; i < 20; i++) { st = await saved(p); if (st.journal.npcs.some((n) => n.name === 'Renamed NPC')) break; await p.waitForTimeout(100); }
+  const ed = st.journal.npcs.find((n) => n.name === 'Renamed NPC');
+  t.ok(ed && ed.updatedAt >= ed.createdAt, 'edit saved' + (ed ? '' : ': ' + JSON.stringify(st.journal.npcs.map((n) => n.name))));
+  t.ok(ed && ed.updatedAt !== ed.createdAt, 'updatedAt bumped (' + (ed && ed.createdAt) + ' / ' + (ed && ed.updatedAt) + ')');
   await p.click('.jcard[open] [data-action="removeEntry"]');
   await p.waitForFunction(() => document.querySelectorAll('.jcard').length === 3);
   t.ok(/Deleted NPC Renamed NPC/.test(await p.textContent('#toasts')), 'delete shows a toast');
@@ -154,7 +156,11 @@ export async function run(env, t) {
   await p.click('.steps li .check >> nth=0');
   st = await saved(p);
   t.ok(st.character.voice.goals.length === 2 && st.character.voice.goals[0].done && st.character.voice.ideals.startsWith('Progress'), 'goals and ideals saved');
-  await p.fill('[data-list-add="character.voice.lines"]', 'Another line'); await p.keyboard.press('Enter');
+  // a re-render from the previous click can swallow typed text, so retry the add until the new line shows
+  for (let i = 0; i < 4 && await p.locator('[data-action="copyLine"]').count() < 2; i++) {
+    await p.fill('[data-list-add="character.voice.lines"]', 'Another line'); await p.keyboard.press('Enter');
+    await p.waitForTimeout(250);
+  }
   await p.waitForFunction(() => document.querySelectorAll('[data-action="copyLine"]').length === 2);
   const cp = await p.locator('[data-action="copyLine"]').first().boundingBox();
   t.ok(cp.width >= 44 && cp.height >= 44, 'copy button is 44px');
