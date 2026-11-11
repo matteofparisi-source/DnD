@@ -896,3 +896,11 @@ button.plate { display: block; width: 100%; min-height: var(--hit); cursor: poin
 .fx-list li { flex-wrap: wrap; }
 .fx-kind { font-size: var(--fs-xs); font-weight: 600; color: var(--ink-3); text-transform: uppercase; letter-spacing: .06em; }
 .fx-listing h3 { margin-top: var(--s-3); }
+.fx-applied { margin: var(--s-2) 0; }
+.fx-applied .hint.warn { color: var(--warn); }
+.res-list li.res-head { grid-column: 1 / -1; display: block; padding-top: var(--s-2); font-size: var(--fs-sm); color: var(--ink-2); }
+.tag-s.feat { color: var(--blueprint); border-color: currentColor; }
+.ch-group { margin: 0 0 var(--s-3); }
+.ch-group h3 { margin: var(--s-2) 0; }
+.ch-group .field { display: block; margin-bottom: var(--s-2); }
+.ch-group select, .ch-group input { width: 100%; }

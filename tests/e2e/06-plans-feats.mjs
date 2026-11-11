@@ -90,6 +90,8 @@ export async function run(env, t) {
   await p.click('details[data-fmore="feats"] > summary');
   await p.click('[data-action="filter"][data-page="feats"][data-key="cat"][data-val="Dragonmark"]');
   await p.click('[data-action="takeFeat"][data-id="mark-of-making"]');
+  await p.selectOption('.sheet select[data-key="spellAbility"]', 'int'); // the Mark asks for its spellcasting ability
+  await p.click('.sheet [data-action="choicesGo"]');
   await p.click('[data-action="filter"][data-page="feats"][data-key="cat"][data-val="Greater Dragonmark"]');
   const eligible = await p.locator('#list .item b').allTextContents();
   t.ok(eligible.includes('Greater Mark of Making') && !eligible.includes('Greater Mark of Storm'), 'greater mark offered only after its base mark: ' + eligible);

@@ -4,8 +4,10 @@
 //  - 'artillerist': Artillerist subclass spells (always prepared at the listed level; not on the class list)
 //  - 'extra':  spells from official books outside the user's set (PHB 2024, Tasha's, Xanathar's, Eberron: Forge of
 //              the Artificer). They sit on the 2025 list but carry a `book` name; hidden by default (see EXTRA_BOOK).
+//  - 'feat':   spells that only feats can grant (feat-spells.js): hidden from the Artificer list unless a taken feat grants them or the Feat filter selects a feat whose list has them.
 //  - 'legacy': spells on the 2020 Tasha's artificer list (Xanathar's/Tasha's spells) that the 2025 list
 //              doesn't show. Hidden by default: check with your DM before using them.
+import { FEAT_SPELLS, SPELL_FEATS } from './feat-spells.js';
 const L = (name, level, school, flags = '') => ({ name, level, school, flags });
 
 const LIST = [
@@ -76,12 +78,14 @@ const tag = (src) => (s) => (EXTRA_BOOK[s.name]
   ? { ...s, id: slug(s.name), source: 'extra', book: EXTRA_BOOK[s.name] }
   : { ...s, id: slug(s.name), source: src });
 
+// `feats` lists the feats whose grant list, choice pool or expanded list contains the spell (empty = not tied to any feat).
 export const SPELLS = [
   ...LIST.map(tag('list')),
   { ...L('Mending', 0, 'Transmutation'), id: 'mending', source: 'tinker' },
   ...ARTILLERIST.map(tag('artillerist')),
   ...LEGACY.map(tag('legacy')),
-];
+  ...FEAT_SPELLS.map(([id, name, level, school, flags]) => ({ name, level, school, flags, id, source: 'feat' })),
+].map((s) => ({ ...s, feats: SPELL_FEATS[s.id] || [] }));
 
 export const SOURCE_LABEL = {
   list: 'Artificer list',
@@ -89,5 +93,6 @@ export const SOURCE_LABEL = {
   artillerist: 'Artillerist',
   legacy: "Tasha's 2020 list",
   extra: 'Other official book',
+  feat: 'Feat spell',
 };
 export const SCHOOLS = [...new Set(SPELLS.map((s) => s.school))].sort();

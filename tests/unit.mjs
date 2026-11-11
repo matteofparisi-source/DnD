@@ -31,7 +31,8 @@ export async function run(t) {
   for (const f of [...walk('js', '.js'), 'sw.js', 'index.html']) t.ok(!/Math\.random/.test(read(f)), `Math.random in ${f}`);
 
   // --- 3. data integrity
-  const { SPELLS } = await imp('js/data/spells.js'); const { SPELL_DETAILS } = await imp('js/data/spell-details.js');
+  const { SPELLS } = await imp('js/data/spells.js'); const { FEAT_SPELL_DETAILS } = await imp('js/data/feat-spell-details.js');
+  const SPELL_DETAILS = { ...(await imp('js/data/spell-details.js')).SPELL_DETAILS, ...FEAT_SPELL_DETAILS }; // the app merges both when the Spells page opens
   const { FEATS } = await imp('js/data/feats.js'); const { PLANS } = await imp('js/data/plans.js');
   const art = await imp('js/data/artificer.js'); const { WEAPONS, ARMOR } = await imp('js/data/equipment.js');
   const dupes = (ids) => ids.filter((x, i) => ids.indexOf(x) !== i);
@@ -44,7 +45,8 @@ export async function run(t) {
   t.eq(detailIds.filter((i) => !SPELLS.some((s) => s.id === i)), [], 'every SPELL_DETAILS key is a spell');
   for (const s of SPELLS) t.ok(s.name && Number.isInteger(s.level) && s.level >= 0 && s.level <= 9 && s.school && s.source, `spell fields: ${s.id}`);
   for (const [id, d] of Object.entries(SPELL_DETAILS)) {
-    t.ok(d.time && d.range && d.components && d.duration && typeof d.desc === 'string' && d.desc.length > 10, `spell details complete: ${id}`);
+    const noText = d.verbatim === false && d.checked === false && d.desc === '' && /^https:\/\//.test(d.source); // community feat spell: metadata and a Source link only
+    t.ok(d.time && d.range && d.components && d.duration && typeof d.desc === 'string' && (d.desc.length > 10 || noText), `spell details complete: ${id}`);
     // Sanity guard against pasting book text: non-SRD descriptions stay short, own-words summaries.
     if (d.verbatim !== true && d.checked !== true) t.ok(d.desc.length <= 900, `non-verbatim description is short (${d.desc.length} chars): ${id}`);
   }
@@ -239,6 +241,114 @@ export async function run(t) {
     t.ok(Array.isArray(m1.character.buffs) && m1.character.feats[0].effects.length === 0 && JSON.stringify(m1.character.feats[0].choices) === '{}', 'feat choices/effects and buffs added');
     t.ok(JSON.stringify(m1) === JSON.stringify(m2), 'v5 normalize is idempotent');
     t.ok(normalize({ version: 5, character: { buffs: ['x', 3, 'x'] } }).character.buffs.join() === 'x', 'buffs deduped and cleaned');
+  }
+
+  // --- 8. feats: effect data, feat spells, choice resolution, uses
+  {
+    const fx = await imp('js/effects.js'); const { FEAT_FX, POOLS } = await imp('js/data/feat-fx.js');
+    const { FEAT_SPELLS, SPELL_FEATS } = await imp('js/data/feat-spells.js'); const srcLinks = (await imp('js/data/sources.js')).SOURCE_LINKS;
+    const sid = new Set(SPELLS.map((s) => s.id));
+    t.eq(Object.keys(FEAT_FX).filter((i) => !FEATS.some((f) => f.id === i)), [], 'every FEAT_FX id is a feat');
+    t.eq(FEATS.map((f) => f.id).filter((i) => !FEAT_FX[i]), [], 'every feat has FEAT_FX');
+    t.eq([Object.values(FEAT_FX).filter((x) => x.fxSrc === 'SRD 5.2.1').length, Object.values(FEAT_FX).filter((x) => x.fxSrc === 'community').length], [17, 106], 'feat fx sources: 17 SRD, 106 community');
+    const bad = [];
+    for (const [id, x] of Object.entries(FEAT_FX)) {
+      if (!x.fx.length || !x.notes || !['SRD 5.2.1', 'community'].includes(x.fxSrc)) bad.push(`${id}: fields`);
+      const tpls = x.fx.flatMap((e) => (e.type === 'choice' ? [].concat(e.then || [], e.thenTool || []) : [e]));
+      for (const e of tpls) {
+        if (!['spell', 'use'].includes(e.type) && !fx.cleanEffect({ ...e, target: e.target === '$' ? (fx.EFFECT_META[e.type]?.def?.target ?? 'x') : e.target })) bad.push(`${id}: bad effect ${e.type}`);
+        if (e.type === 'spell' && e.target !== '$' && !sid.has(e.target)) bad.push(`${id}: unknown spell ${e.target}`);
+        if (e.type === 'spell' && !['', null, 'long', 'short', 'atWill'].includes(e.free)) bad.push(`${id}: free ${e.free}`);
+        if (e.type === 'use' && (!e.name || !['long', 'short'].includes(e.reset) || !(e.value === 'pb' || /^mod:(str|dex|con|int|wis|cha)$/.test(e.value) || e.value > 0))) bad.push(`${id}: use ${e.target}`);
+      }
+      for (const e of x.fx.filter((q) => q.type === 'choice')) {
+        if (!e.key || !e.label || !(e.n === 'pb' || e.n >= 1)) bad.push(`${id}: choice fields ${e.key}`);
+        if (e.pool && !POOLS[e.pool]) bad.push(`${id}: pool ${e.pool}`);
+        for (const v of Object.values(e.optionsBy || {})) if (!POOLS[v]) bad.push(`${id}: optionsBy ${v}`);
+        if (e.dependsOn && !x.fx.some((q) => q.key === e.dependsOn)) bad.push(`${id}: dependsOn ${e.dependsOn}`);
+        if (e.of === 'spell') for (const o of fx.choiceOptions(e, { list: 'wizard' }, POOLS) || []) if (!sid.has(o)) bad.push(`${id}: choice option ${o}`);
+        if (e.of === 'spell') for (const list of Object.keys(e.optionsBy || {})) for (const o of fx.choiceOptions(e, { [e.dependsOn]: list }, POOLS)) if (!sid.has(o)) bad.push(`${id}: choice option ${o}`);
+        if (typeof e.then === 'string' || (e.then === undefined)) bad.push(`${id}: choice ${e.key} then`);
+      }
+      for (const l of Object.values(x.expanded || {})) for (const o of l) if (!sid.has(o)) bad.push(`${id}: expanded ${o}`);
+    }
+    t.eq(bad, [], 'feat fx data is valid');
+    for (const [k, l] of Object.entries(POOLS)) t.eq(l.filter((o) => !sid.has(o)), [], `pool ${k}: all spells exist`);
+    // feat membership: every spell a feat names (fixed, pool, expanded) lists that feat
+    const missing = [];
+    const need = (spell, feat) => { if (!SPELLS.find((s) => s.id === spell)?.feats.includes(feat)) missing.push(`${spell}<-${feat}`); };
+    for (const [id, x] of Object.entries(FEAT_FX)) {
+      for (const e of x.fx) {
+        if (e.type === 'spell') need(e.target, id);
+        if (e.type === 'choice' && e.of === 'spell') {
+          for (const o of e.pool ? POOLS[e.pool] : e.options || []) need(o, id);
+          for (const v of Object.values(e.optionsBy || {})) for (const o of POOLS[v]) need(o, id);
+        }
+      }
+      for (const l of Object.values(x.expanded || {})) for (const o of l) need(o, id);
+    }
+    t.eq(missing, [], 'spells list the feats that reach them');
+    t.eq(Object.keys(SPELL_FEATS).filter((i) => !sid.has(i)), [], 'SPELL_FEATS keys are spells');
+    t.eq(Object.values(SPELL_FEATS).flat().filter((f) => !FEAT_FX[f]), [], 'SPELL_FEATS values are feats');
+    const featOnly = SPELLS.filter((s) => s.source === 'feat');
+    t.ok(featOnly.length === FEAT_SPELLS.length && featOnly.every((s) => s.feats.length && FEAT_SPELL_DETAILS[s.id] && SOURCE_LINKS_SPELL(s.id)), `feat-only spells have feats, details and a Source link (${featOnly.length})`);
+    function SOURCE_LINKS_SPELL(id) { return /^https:\/\//.test(srcLinks.spell[id] || ''); }
+    t.eq(Object.keys(FEAT_SPELL_DETAILS).filter((i) => !featOnly.some((s) => s.id === i)), [], 'feat spell details only for feat-only spells');
+    t.ok(SPELLS.find((s) => s.id === 'identify').feats.includes('fey-touched') && SPELLS.find((s) => s.id === 'identify').source === 'list', 'Identify is an Artificer spell that Fey Touched also reaches');
+    t.eq(SPELLS.filter((s) => s.source === 'feat' && s.feats.length === 0).length, 0, 'no feat-only spell without a feat');
+
+    // choice resolution and effects
+    const cat = { feats: FEATS.map((f) => ({ ...f, ...FEAT_FX[f.id] })), spells: SPELLS, spellFx: {} };
+    const mkc = (taken, o = {}) => { const d = defaultState().character; d.level = 5; d.abilities.int = 16; d.feats = taken.map(([featId, choices, extra], i) => ({ id: `e${i}`, featId, level: 4, notes: '', choices: choices || {}, effects: [], ...extra })); return Object.assign(d, o); };
+    const E = (c) => fx.createFx(c, cat);
+    let c = mkc([['fey-touched', { asi: 'int', spell1: 'identify' }]]);
+    let f = E(c);
+    t.ok(f.score('int') === 17 && f.abil('int').parts.some((p) => p.label === 'Fey Touched' && p.value === 1 && /unverified/.test(p.note)), 'Fey Touched +1 INT with an unverified feat label');
+    t.eq(f.grants().map((g) => [g.id, g.always, g.free, g.ability]), [['misty-step', true, 'long', 'int'], ['identify', true, 'long', 'int']], 'Fey Touched grants Misty Step and the chosen spell, spell ability = the ability chosen');
+    t.eq(f.uses().map((u) => [u.key, u.max, u.reset]), [['feat:e0:cast-misty-step', 1, 'long'], ['feat:e0:cast-identify', 1, 'long']], 'free casts become trackers keyed by feat entry and spell');
+    c = mkc([['fey-touched', { asi: 'cha', spell1: 'bane' }]]); f = E(c);
+    t.ok(f.score('cha') === 11 && f.grants().every((g) => g.ability === 'cha') && f.dc('cha').total === 8 + 3 + 0 + 0 && f.satk('cha').total === 3, 'spell ability follows the choice; DC/attack for that ability');
+    t.eq(E(mkc([['fey-touched', {}]])).grants().map((g) => g.id), ['misty-step'], 'unmade choices add nothing (except fixed grants)');
+    c = mkc([['tough'], ['alert']]); f = E(c);
+    t.ok(f.hpmax(true).total === E(mkc([])).hpmax(true).total + 10 && f.init().total === E(mkc([])).init().total + 3, 'Tough +2 per level; Alert adds the Proficiency Bonus');
+    t.eq(E(mkc([['ability-score-improvement', { asi: ['int', 'int'] }]])).score('int'), 18, 'ASI picking the same ability twice gives +2');
+    t.eq(E(mkc([['ability-score-improvement', { asi: ['int', 'int'] }]], { abilities: { ...defaultState().character.abilities, int: 19 } })).score('int'), 20, 'ASI never passes 20');
+    c = mkc([['skilled', { skills: ['arcana', "Smith's Tools", 'stealth'] }]], { skills: {} }); f = E(c);
+    t.ok(f.skillInfo('arcana').level === 1 && f.skillInfo('stealth').level === 1 && f.list.some((e) => e.type === 'prof' && e.text === "Smith's Tools"), 'Skilled: skills and a tool proficiency');
+    c = mkc([['keen-mind', { skill: 'arcana' }]], { skills: { arcana: 1 } }); t.eq(E(c).skillInfo('arcana').level, 2, 'Keen Mind gives Expertise when already proficient');
+    c = mkc([['keen-mind', { skill: 'history' }]], { skills: {} }); t.eq(E(c).skillInfo('history').level, 1, 'Keen Mind gives proficiency otherwise');
+    c = mkc([['resilient', { asi: 'wis' }]]); f = E(c);
+    t.ok(f.score('wis') === 11 && f.save('wis').parts.some((p) => p.label === 'Resilient'), 'Resilient: +1 and the save proficiency');
+    c = mkc([['magic-initiate', { list: 'wizard', spellAbility: 'int', cantrips: ['fire-bolt', 'light'], spell1: 'shield' }]]); f = E(c);
+    t.eq(f.grants().map((g) => g.id), ['fire-bolt', 'light', 'shield'], 'Magic Initiate: cantrips and level 1 spell from the chosen list');
+    t.eq(fx.choiceOptions(FEAT_FX['magic-initiate'].fx.find((e) => e.key === 'spell1'), { list: 'cleric' }, POOLS).includes('bless'), true, 'dependent options follow the chosen list');
+    t.eq(fx.choiceOptions(FEAT_FX['magic-initiate'].fx.find((e) => e.key === 'spell1'), {}, POOLS), [], 'no list yet: no options');
+    c = mkc([['magic-initiate', { list: 'wizard', spellAbility: 'int', spell1: 'shield' }], ['magic-initiate', { list: 'cleric', spellAbility: 'wis', spell1: 'bless' }]]); f = E(c);
+    t.eq(f.uses().map((u) => u.key), ['feat:e0:cast-shield', 'feat:e1:cast-bless'], 'repeatable feats resolve per entry');
+    // uses: pb, fixed, mod; reset kinds; level gating
+    c = mkc([['lucky'], ['mage-slayer'], ['mark-of-detection', { spellAbility: 'wis' }]]); f = E(c);
+    const u = Object.fromEntries(f.uses().map((x) => [x.key, x]));
+    t.ok(u['feat:e0:luck'].max === 3 && u['feat:e0:luck'].reset === 'long' && u['feat:e1:guardedMind'].reset === 'short', 'uses: PB max (level 5 = 3), short and long resets');
+    t.eq(f.grants().map((g) => g.id), ['detect-magic', 'detect-poison-and-disease', 'see-invisibility'], 'Mark of Detection spells (see invisibility needs level 3)');
+    c.level = 2; t.eq(E(c).grants().map((g) => g.id), ['detect-magic', 'detect-poison-and-disease'], 'minLevel gates a granted spell');
+    const modFeat = { id: 'zz', name: 'Zz', fx: [{ type: 'use', target: 'k', name: 'K', value: 'mod:int', reset: 'long' }], fxSrc: 'SRD 5.2.1' };
+    c = mkc([['zz']]); t.eq(fx.createFx(c, { feats: [modFeat] }).uses()[0].max, 3, 'mod:<ability> uses follow the modifier');
+    // expanded lists
+    const ex = fx.expandedSpells(mkc([['mark-of-detection', { spellAbility: 'int' }]]), cat);
+    t.ok(ex.ids.has('identify') && ex.ids.has('legend-lore') && ex.always.size === 0, 'Spells of the Mark join the list');
+    const pot = fx.expandedSpells(mkc([['mark-of-detection', {}], ['potent-dragonmark', { asi: 'int' }]]), { ...cat, maxSpellLevel: (l) => art.maxSpellLevel(l) });
+    t.ok(pot.always.has('identify') && pot.always.has('find-traps') && !pot.always.has('clairvoyance') && pot.ids.has('legend-lore'), 'Potent Dragonmark: always prepared only up to the level you can cast (level 5: spells up to level 2)');
+    t.ok(!fx.expandedSpells(mkc([['potent-dragonmark', { asi: 'int' }]]), cat).always.size, 'Potent Dragonmark alone has no list to prepare');
+    const tpl = [[{ type: 'spell', target: 'a b!c', free: 'weird', ability: 'int', junk: 1 }], [{ type: 'use', target: 'x y', name: 'n'.repeat(200), value: 2 }], [{ type: 'choice', key: 'k', label: 'L', n: 1, of: 'ability', options: ['int'], then: { type: 'ability', target: '$', value: 1, evil: 1 } }]].map((l) => fx.cleanEffects(l)[0]);
+    t.ok(tpl[0].target === 'abc' && tpl[0].free === null && !('junk' in tpl[0]) && tpl[1].target === 'xy' && tpl[1].name.length === 80 && tpl[2].then.target === '$' && !('evil' in tpl[2].then), 'spell/use/choice effects are sanitized (ids, strings, unknown keys)');
+    t.eq(E(mkc([['fey-touched', { asi: 'zzz' }]])).score('int'), 16, 'an invalid pick adds nothing (no fallback to a default ability)');
+    t.eq(E(mkc([['resilient', { asi: 'bogus' }]])).list.filter((e) => e.src.name === 'Resilient').length, 0, 'invalid pick: no effect at all');
+    let longNotes = 0; for (const x of Object.values(FEAT_FX)) { if (x.notes.length > 110) longNotes++; for (const e of x.fx) if (e.type === 'note' && e.text.length > 110) longNotes++; }
+    t.eq(longNotes, 0, 'feat notes are terse reminders (110 characters or less)');
+    t.ok(/Misty Step/.test(fx.describeEffect({ type: 'spell', target: 'misty-step', always: true, free: 'long', freeCount: 1, ability: 'cha' }, (i) => 'Misty Step')) && fx.describeEffect({ type: 'init', value: 'pb' }).includes('Proficiency Bonus'), 'describeEffect reads well');
+    // choices survive normalize
+    const n = normalize({ version: 5, character: { feats: [{ id: 'a', featId: 'skilled', choices: { skills: ['arcana', 7, 'x'.repeat(200)], asi: 'int', bad: 5 } }] } }).character.feats[0].choices;
+    t.ok(n.asi === 'int' && n.skills.length === 2 && n.skills[1].length === 80 && !('bad' in n), 'feat choices are cleaned by normalize');
   }
 }
 

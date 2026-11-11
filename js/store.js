@@ -159,7 +159,7 @@ function normalizeV5(c) {
     const ch = isObj(f.choices) ? f.choices : {};
     f.choices = {};
     for (const k of Object.keys(ch)) {
-      const v = Array.isArray(ch[k]) ? ch[k].filter((x) => typeof x === 'string').slice(0, 20) : typeof ch[k] === 'string' ? ch[k] : null;
+      const v = Array.isArray(ch[k]) ? ch[k].filter((x) => typeof x === 'string').map((x) => x.slice(0, 80)).slice(0, 20) : typeof ch[k] === 'string' ? ch[k].slice(0, 80) : null;
       if (v !== null) f.choices[k.slice(0, 40)] = v;
     }
   }

@@ -10,7 +10,8 @@ import { PLANS, PLAN_TYPES, TIERS } from './data/plans.js';
 import { FEATS, FEAT_CATEGORIES, FEAT_SOURCES } from './data/feats.js';
 import { WEAPONS, ARMOR } from './data/equipment.js';
 import { SPELL_FX } from './data/spell-fx.js';
-import { createFx, newEffect, cleanEffect, EFFECT_META, AC_CONDS, ABILITY_NAME, SKILL_NAME } from './effects.js';
+import { createFx, newEffect, cleanEffect, EFFECT_META, AC_CONDS, ABILITY_NAME, SKILL_NAME, choiceCount, choiceOptions, featChoices, describeEffect } from './effects.js';
+import { FEAT_FX, POOLS } from './data/feat-fx.js';
 import {
   KEY, load, save, uid, normalize, defaultState, backupFile, downloadFile, newItem, newWeapon, ensureItemData,
   newNpc, newPlace, newFaction, newQuest, cleanTags, readSnaps, takeSnapshot, localDay, loadInfo, releaseSave, isBackup, SCHEMA_VERSION,
@@ -36,14 +37,14 @@ let jtag = ''; // global journal tag filter
 const COLL_OF_TAB = { journal: 'sessions', npcs: 'npcs', places: 'places', factions: 'factions', quests: 'quests' };
 let addMenuOpen = false;
 
-// Spell details (about 100 KB) are loaded on demand the first time the Spells page renders.
+// Spell details (about 250 KB, Artificer spells plus the spells feats can grant) are loaded on demand the first time the Spells page renders.
 let DETAILS = null;
 let detailsState = 'idle'; // idle | loading | failed
 function ensureDetails() {
   if (DETAILS || detailsState === 'loading') return;
   detailsState = 'loading';
-  import('./data/spell-details.js')
-    .then((m) => { DETAILS = m.SPELL_DETAILS; detailsState = 'idle'; })
+  Promise.all([import('./data/spell-details.js'), import('./data/feat-spell-details.js')])
+    .then(([m, f]) => { DETAILS = { ...m.SPELL_DETAILS, ...f.FEAT_SPELL_DETAILS }; detailsState = 'idle'; })
     .catch(() => { detailsState = 'failed'; })
     .then(() => { if (state.ui.tab === 'spells') renderList(); });
 }
@@ -103,7 +104,9 @@ function focusBy(attr, val) { [...view.querySelectorAll(`[${attr}]`)].find((x) =
 // ---------- derived values ----------
 // Every derived number comes from effects.js (base scores + feats + equipped items + active spells + manual fields).
 // One Fx object is shared until the state changes (dirtyFx() in setPath/persist/render) or the current task ends.
-const FX_CAT = { feats: FEATS, spellFx: SPELL_FX, spells: SPELLS };
+// Feats with their effect data (feat-fx.js) merged in; collect() reads fx, fxSrc, expanded from these.
+const FX_FEATS = FEATS.map((f) => ({ ...f, ...(FEAT_FX[f.id] || {}) }));
+const FX_CAT = { feats: FX_FEATS, spellFx: SPELL_FX, spells: SPELLS, maxSpellLevel };
 let fxMemo = null;
 const dirtyFx = () => { fxMemo = null; };
 function FX() {
@@ -122,10 +125,32 @@ const autoMaxHP = () => FX().hpmax(true).total;
 const maxHP = () => FX().hpmax(C().hp.auto).total;
 const hdLeft = () => Math.max(0, lvl() - num(C().hdUsed));
 
+// What taken feats do to spells, cached for the current Fx object: spells they grant (id -> grants), spells they make always prepared,
+// and "Spells of the Mark" lists that join the Artificer list (id -> feat names; always prepared with Potent Dragonmark).
+let fsMemo = null;
+function featSpells() {
+  const fx = FX();
+  if (fsMemo?.fx === fx) return fsMemo;
+  const granted = new Map();
+  const always = new Set();
+  for (const g of fx.grants()) {
+    if (!granted.has(g.id)) granted.set(g.id, []);
+    granted.get(g.id).push(g);
+    if (g.always) always.add(g.id);
+  }
+  const ex = fx.expanded();
+  for (const id of ex.always) always.add(id);
+  fsMemo = { fx, granted, always, expanded: ex.ids, ap: null };
+  return fsMemo;
+}
 function alwaysPrepared() {
-  const ids = new Set(['mending']);
-  if (lvl() >= 3) for (const [l, names] of ARTILLERIST_SPELLS) if (lvl() >= l) names.forEach((n) => ids.add(SPELLS.find((s) => s.name === n).id));
-  return ids;
+  const m = featSpells();
+  if (!m.ap) {
+    const ids = new Set(['mending', ...m.always]);
+    if (lvl() >= 3) for (const [l, names] of ARTILLERIST_SPELLS) if (lvl() >= l) names.forEach((n) => ids.add(SPELLS.find((s) => s.name === n).id));
+    m.ap = ids;
+  }
+  return m.ap;
 }
 function spellStatus(s) {
   if (alwaysPrepared().has(s.id)) return 'always';
@@ -251,14 +276,17 @@ const reqText = (f) => {
   return parts.join(', ') || 'None';
 };
 
+const featUse = (key) => FX().uses().find((u) => u.key === key);
 function usesMax(key) {
+  if (key.startsWith('feat:')) return featUse(key)?.max || 0;
   const u = USES[key];
   return lvl() >= u.minLvl ? u.max(lvl(), intMod()) : 0;
 }
 
 function calc(key) {
   const c = C();
-  const [kind, arg] = key.split(':');
+  const kind = key.split(':')[0];
+  const arg = key.slice(kind.length + 1); // feat use keys contain colons: useleft:feat:<entry>:<key>
   switch (kind) {
     case 'abil': return String(abilScore(arg));
     case 'mod': return fmt(am(arg));
@@ -743,11 +771,14 @@ function resourcesCard() {
   const c = C();
   const slots = SLOTS[lvl() - 1].map((n, i) => (n ? `<li><span class="res-info"><span class="res-name">Level ${i + 1} slots</span><span class="res-left" data-calc="slotleft:${i}">${calc(`slotleft:${i}`)}</span></span>${pips(`character.slotsUsed.${i}`, n, num(c.slotsUsed[i]), `level ${i + 1} slot`)}</li>` : '')).join('');
   const uses = Object.keys(USES).filter((k) => usesMax(k)).map((k) => `<li><span class="res-info"><span class="res-name">${esc(USES[k].name)}</span><span class="res-left" data-calc="useleft:${k}">${calc(`useleft:${k}`)}</span></span>${pips(`character.uses.${k}`, usesMax(k), num(c.uses[k]), USES[k].name)}</li>`).join('');
+  const byFeat = new Map();
+  for (const u of FX().uses()) { if (!byFeat.has(u.entry)) byFeat.set(u.entry, []); byFeat.get(u.entry).push(u); }
+  const featUses = [...byFeat.values()].map((arr) => `<li class="res-head"><b>${esc(arr[0].feat)}</b></li>${arr.map((u) => `<li><span class="res-info"><span class="res-name">${esc(u.name)}</span><small class="muted">${u.reset === 'short' ? 'Short or Long Rest' : 'Long Rest'}</small><span class="res-left" data-calc="useleft:${esc(u.key)}">${calc(`useleft:${u.key}`)}</span></span>${pips(`character.uses.${u.key}`, u.max, num(c.uses[u.key]), u.name)}</li>`).join('')}`).join('');
   return `
   <section class="card">
     <h2>Resources</h2>
     <p class="hint">Tap a circle to spend a slot or use; tap a lit one to give it back.</p>
-    <ul class="list res-list">${slots}${uses}
+    <ul class="list res-list">${slots}${uses}${featUses}
       <li><span class="res-info"><span class="res-name">Hit Dice (d8)</span><span class="res-left" data-calc="hdleft">${calc('hdleft')}</span></span><button data-action="sheet" data-kind="hd" ${lvl() - num(c.hdUsed) > 0 ? '' : 'disabled'}>Spend</button></li>
     </ul>
   </section>`;
@@ -992,9 +1023,23 @@ function spellBody(s) {
     : /\(user's copy\)/.test(d.source)
     ? `<span class="tag-s ok">Checked against your book</span> <span class="muted">${esc(d.source)}</span>`
     : `<span class="tag-s warn">Community source · unverified</span> ${url ? '' : `<span class="muted">${esc(d.source)}</span>`}`;
-  return `<dl class="sd-list">${row('Casting Time', d.time)}${row('Range', d.range)}${row('Components', d.components)}${row('Duration', d.duration)}${long('Description', d.desc)}${higher ? long('At Higher Levels', higher) : ''}</dl>
+  return `<dl class="sd-list">${row('Casting Time', d.time)}${row('Range', d.range)}${row('Components', d.components)}${row('Duration', d.duration)}${d.desc ? long('Description', d.desc) : ''}${higher ? long('At Higher Levels', higher) : ''}</dl>
     <p class="sd-src">${src} ${srcLink(SOURCE_LINKS.spell[s.id], s.name)}</p>
     ${d.note ? `<p class="sd-note">${esc(d.note)}</p>` : ''}${note}`;
+}
+// Tags for a spell that taken feats grant or add: the feat, free casts, and its own DC/attack when the feat uses another ability than INT.
+function grantTags(s) {
+  const m = featSpells();
+  const gs = m.granted.get(s.id) || [];
+  const out = [];
+  for (const g of gs) {
+    const how = g.free === 'atWill' ? 'at will' : g.free ? `free ${g.freeCount > 1 ? `${g.freeCount}× ` : ''}${g.free === 'short' ? 'per Short or Long Rest' : 'per Long Rest'}` : '';
+    out.push(`<span class="tag-s feat">From ${esc(g.feat)}${how ? ` · ${how}` : ''}${g.known && !g.always ? ' · known' : ''}</span>`);
+    if (g.ability !== 'int') out.push(`<span class="tag-s feat">${g.ability.toUpperCase()} · DC ${FX().dc(g.ability).total} · Atk ${fmt(FX().satk(g.ability).total)}</span>`);
+  }
+  const ex = m.expanded.get(s.id);
+  if (ex && !gs.length) out.push(`<span class="tag-s feat">Spell of the Mark · ${esc(ex.join(', '))}</span>`);
+  return out.join('');
 }
 function spellCard(s) {
   const st = spellStatus(s);
@@ -1009,7 +1054,7 @@ function spellCard(s) {
       <summary>
         <span class="sp-line">${lvlTag(s.level)}<b class="grow">${esc(s.name)}</b></span>
         <span class="row tight tags-row">
-          ${statusTag(st)}
+          ${statusTag(st)}${grantTags(s)}
           ${ci.action ? '<span class="tag-s cast">Action</span>' : ''}${ci.bonus ? '<span class="tag-s cast">Bonus Action</span>' : ''}${ci.reaction ? '<span class="tag-s cast">Reaction</span>' : ''}${ci.longer ? '<span class="tag-s cast">Longer</span>' : ''}
           ${s.flags.includes('C') ? '<span class="tag-s c">Concentration</span>' : ''}
           ${ci.ritual ? '<span class="tag-s r">Ritual</span>' : ''}
@@ -1030,16 +1075,24 @@ function spellsList() {
   const q = (f.q || '').trim().toLowerCase();
   // When searching, spells whose name matches come before description-only matches.
   const nameHit = (s) => (q && s.name.toLowerCase().includes(q) ? 1 : 0);
+  const fm = featSpells();
+  const featSel = !mine && (f.feat === 'none' || FEAT_WITH_SPELLS.some((x) => x.id === f.feat)) ? f.feat : ''; // a feat id, 'none' or ''
   const list = SPELLS.filter((s) => {
     const st = spellStatus(s);
     const chosen = st !== 'none'; // a spell you already selected stays visible whatever the toggles say
+    const granted = fm.granted.has(s.id);
+    const viaFeat = featSel && featSel !== 'none' && s.feats.includes(featSel); // the Feat filter picked a feat whose list has this spell
     if (f.cast && !castInfo(s)[f.cast]) return false;
     if (mine) {
-      if (!chosen) return false;
+      if (!chosen && !granted) return false;
     } else {
-      if (s.source === 'legacy' && !f.legacy && !chosen) return false;
-      if (s.source === 'extra' && !f.extra && !chosen) return false;
-      if (s.source === 'artillerist' && st !== 'always' && !f.showLocked) return false;
+      if (featSel === 'none' && s.feats.length) return false;
+      if (featSel && featSel !== 'none' && !s.feats.includes(featSel)) return false;
+      const shown = chosen || granted || viaFeat || fm.expanded.has(s.id);
+      if (s.source === 'feat' && !shown) return false; // feat-only spells stay out of the Artificer list unless a feat brings them in
+      if (s.source === 'legacy' && !f.legacy && !shown) return false;
+      if (s.source === 'extra' && !f.extra && !shown) return false;
+      if (s.source === 'artillerist' && st !== 'always' && !f.showLocked && !shown) return false;
       if (f.level !== undefined && f.level !== '' && String(s.level) !== String(f.level)) return false;
       if (f.status === 'selected' && !['always', 'prepared', 'known'].includes(st)) return false;
       if (f.status === 'prepared' && !['prepared', 'known'].includes(st)) return false;
@@ -1047,7 +1100,7 @@ function spellsList() {
       if (f.status === 'none' && st !== 'none') return false;
       if (f.school && s.school !== f.school) return false;
       if (f.conc && !s.flags.includes('C')) return false;
-      if (!f.showLocked && !castable(s) && !chosen) return false;
+      if (!f.showLocked && !castable(s) && !chosen && !granted && !viaFeat) return false;
     }
     return matchQ('spells', s.name, s.school, SOURCE_LABEL[s.source], s.book, det(s.id)?.desc, C().spellNotes[s.id]);
   }).sort((a, b) => nameHit(b) - nameHit(a) || a.level - b.level || a.name.localeCompare(b.name));
@@ -1058,11 +1111,13 @@ function spellsList() {
       : '<p class="muted">No spell matches these filters.</p>');
   }
   if (!mine) return fail + list.map(spellCard).join('');
-  return fail + [0, 1, 2, 3, 4, 5].map((l) => {
+  return fail + [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((l) => {
     const arr = list.filter((s) => s.level === l);
     return arr.length ? `<h3 class="grp">${l === 0 ? 'Cantrips' : `Level ${l}`} <span class="muted">(${arr.length})</span></h3>${arr.map(spellCard).join('')}` : '';
   }).join('');
 }
+// Feats whose grant list, choice pool or expanded list holds at least one spell: the values of the Feat filter.
+const FEAT_WITH_SPELLS = FEATS.filter((ft) => SPELLS.some((s) => s.feats.includes(ft.id))).sort((a, b) => a.name.localeCompare(b.name));
 function tabSpells() {
   ensureDetails();
   const f = F('spells');
@@ -1087,6 +1142,7 @@ function tabSpells() {
       ${mine ? '' : `
       ${chips('spells', 'level', [['', 'All levels'], [0, 'Cantrip'], ...Array.from({ length: 5 }, (_, i) => [i + 1, `Lv ${i + 1}`])])}
       ${chips('spells', 'status', [['', 'Any status'], ['selected', '★ Selected'], ['prepared', 'Prepared'], ['always', 'Always'], ['none', 'Not prepared']])}
+      <div class="row">${fselect('spells', 'feat', [['', 'All'], ['none', 'None'], ...FEAT_WITH_SPELLS.map((ft) => [ft.id, ft.name])], 'Feat')}</div>
       ${fmore('spells', ['school', 'conc', 'showLocked', 'legacy', 'extra'], `
       <div class="row">
         ${fselect('spells', 'school', [['', 'Any school'], ...SCHOOLS.map((s) => [s, s])], 'School')}
@@ -1098,7 +1154,7 @@ function tabSpells() {
       `)}`}
     </div>
     <div id="list">${spellsList()}</div>
-    <p class="hint">Always-prepared spells (Artillerist and Mending) don't count against your prepared total. You can change prepared spells after a Long Rest. Tap a spell's name for its details.</p>
+    <p class="hint">Always-prepared spells (Artillerist, Mending and those your feats grant) don't count against your prepared total. The Feat filter lists the spells a feat grants, offers as a choice or adds to your list. "None" means spells not tied to any feat at all: a spell on the Artificer list that a feat also reaches (Identify, Cure Wounds...) shows under that feat and under "All", not under "None". You can change prepared spells after a Long Rest. Tap a spell's name for its details.</p>
     ${mine ? '' : '<p class="hint">The list follows the 2025 Forge of the Artificer Artificer, taken from a community transcription. "Legacy" spells were on the 2020 Tasha\'s Artificer list but aren\'t on the 2025 list: use them only if your DM agrees. Spells from "other official books" are on the list but come from books outside the ones you play with. Spells you have selected always stay visible.</p>'}
   </section>`;
 }
@@ -1400,6 +1456,25 @@ function tabItems() {
 }
 
 // ----- Feats
+// What a taken feat does right now (from feat-fx.js with your choices, plus effects you added by hand), with its source label.
+function featApplied(t, ft) {
+  const meta = FEAT_FX[t.featId];
+  const chs = featChoices(meta?.fx);
+  const nameOf = (id) => SPELLS.find((x) => x.id === id)?.name || id;
+  const lines = FX().list.filter((e) => e.src.kind === 'feat' && e.src.id === t.id).map((e) => ({ text: describeEffect(e, nameOf), hand: !e.src.fxSrc && (t.effects || []).some((x) => x.id === e.id) })).filter((l) => l.text);
+  const todo = chs.filter((ch) => ![].concat(t.choices?.[ch.key] ?? []).some(Boolean) && !(ch.dependsOn && !t.choices?.[ch.dependsOn])).map((ch) => ch.label);
+  const src = !meta ? '' : meta.fxSrc === 'community' ? '<span class="tag-s warn">Community data · unverified</span>' : '<span class="tag-s ok">SRD 5.2.1</span>';
+  return `<div class="fx-applied">
+    <div class="row tight tags-row"><b>Applied automatically</b> ${src}${meta?.bookChecked ? '<span class="tag-s ok">Checked against your book</span>' : ''}
+      ${chs.length ? `<button class="small" data-action="editChoices" data-id="${esc(t.id)}">Edit choices<span class="sr-only"> of ${esc(ft.name)}</span></button>` : ''}</div>
+    ${todo.length ? `<p class="hint warn">Not chosen yet: ${esc(todo.join(', '))}. Use Edit choices.</p>` : ''}
+    <details class="edit" data-block="fxs-${esc(t.id)}" ${openBlocks.has(`fxs-${t.id}`) ? 'open' : ''}>
+      <summary>Effects in use (${lines.length})<span class="sr-only"> of ${esc(ft.name)}</span></summary>
+      <ul class="list fx-list">${lines.map((l) => `<li>${esc(l.text)}${l.hand ? ' <small class="muted">added by hand</small>' : ''}</li>`).join('') || '<li class="muted">Nothing yet.</li>'}</ul>
+      ${meta?.dataNote ? `<p class="hint">${esc(meta.dataNote)}</p>` : ''}
+    </details>
+  </div>`;
+}
 function featsList() {
   const f = F('feats');
   const view = f.status || 'available'; // available = I qualify and don't have it (or it repeats) | taken | all
@@ -1431,9 +1506,10 @@ function featsList() {
       ${taken.map((t) => `
         <div class="row taken">
           ${input(`character.feats.#${t.id}.level`, { label: 'Taken at level', type: 'number', min: 1, max: 20, cls: 'xs' })}
-          ${input(`character.feats.#${t.id}.notes`, { label: 'Choices (ability +1, spells, skills…)', cls: 'grow' })}
+          ${input(`character.feats.#${t.id}.notes`, { label: 'Notes', cls: 'grow' })}
           <button class="icon danger" data-action="dropFeat" data-id="${esc(t.id)}" title="Remove" aria-label="Remove feat ${esc(ft.name)}">✕</button>
         </div>
+        ${featApplied(t, ft)}
         <details class="edit" data-block="fx-${esc(t.id)}" data-lazy="fx:${esc(t.id)}" ${openBlocks.has(`fx-${t.id}`) ? 'open' : ''}>
           <summary>Effects${(t.effects || []).length ? ` (${t.effects.length})` : ''}<span class="sr-only"> of ${esc(ft.name)}</span></summary>
           ${openBlocks.has(`fx-${t.id}`) ? `<div class="lazy-body">${fxEditor(`character.feats.#${t.id}.effects`, t.effects, 'Numbers this feat changes: they join your sheet automatically.')}</div>` : ''}
@@ -1464,7 +1540,7 @@ function tabFeats() {
 function tabSelected() {
   const c = C();
   const spells = SPELLS.filter((s) => spellStatus(s) !== 'none').sort((a, b) => a.level - b.level || a.name.localeCompare(b.name));
-  const byLevel = [0, 1, 2, 3, 4, 5].map((l) => {
+  const byLevel = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((l) => {
     const sp = spells.filter((s) => s.level === l);
     if (!sp.length) return '';
     return `<div class="sel-group">${lvlTag(l)} ${sp.map((s) => `<span class="pill ${spellStatus(s)}">${esc(s.name)}${spellStatus(s) === 'always' ? ' <small>always</small>' : ''}${s.flags.includes('C') ? ' <small>C</small>' : ''}${s.flags.includes('R') ? ' <small>R</small>' : ''}</span>`).join('')}</div>`;
@@ -2005,6 +2081,7 @@ function applyRest(c, kind, { clearConds = false, rolls = [] } = {}) {
     }
     if (lvl() >= 20 && c.items.some((i) => i.attuned)) c.uses.flash = 0; // Magical Guidance
     else if (lvl() >= 14) c.uses.flash = Math.max(0, num(c.uses.flash) - 1); // Refreshed Genius
+    for (const u of FX().uses()) if (u.reset === 'short') delete c.uses[u.key]; // feat uses and free casts that come back on a Short Rest
     return;
   }
   c.buffs = []; // spell effects switched on by hand end with the rest (before HP, so Aid's bonus is gone)
@@ -2036,6 +2113,11 @@ function restSummary(kind, opts) {
     const y = Math.max(0, max - num(a.uses[k]));
     if (x !== y) lines.push(`${USES[k].name} ${x}→${y}`);
   }
+  for (const u of FX().uses()) {
+    const x = Math.max(0, u.max - num(b.uses[u.key]));
+    const y = Math.max(0, u.max - num(a.uses[u.key]));
+    if (x !== y) lines.push(`${u.name} (${u.feat}) ${x}→${y}`);
+  }
   if (b.buffs.length && !a.buffs.length) lines.push(`Spell effects ended (${b.buffs.map((id) => SPELLS.find((s) => s.id === id)?.name || id).join(', ')})`);
   if (b.cannons.length && !a.cannons.length) lines.push(`${b.cannons.length === 1 ? 'Cannon' : 'Cannons'} removed`);
   if (num(b.exhaustion) !== num(a.exhaustion)) lines.push(`Exhaustion ${num(b.exhaustion)} → ${num(a.exhaustion)}`);
@@ -2063,6 +2145,46 @@ function qaAddTags() {
   sh.f.tagIn = '';
   renderSheet();
   sheetRoot.querySelector('[data-fk="f-tagIn"]')?.focus({ preventScroll: true });
+}
+// ----- Feat choices: the sheet that opens when you take a feat that asks for picks (and from "Edit choices").
+// Picks live in sh.picks[key] (a list per choice); they are stored on the taken feat as entry.choices[key] (a string for one pick, a list for several).
+const spellLabel = (id) => { const sp = SPELLS.find((x) => x.id === id); return sp ? `${sp.name} (${sp.level ? `level ${sp.level}` : 'cantrip'})` : id; };
+const choiceLabel = (ch, v) => (ch.of === 'ability' ? ABILITY_NAME[v] : ch.of === 'skill' || ch.of === 'skillOrTool' ? SKILL_NAME[v] : ch.of === 'spell' ? spellLabel(v) : ch.of === 'list' ? `${v[0].toUpperCase()}${v.slice(1)}` : null) || v;
+// One choice: how many picks it asks for, what it offers (null = free text) and whether it waits for another choice.
+function choiceSlots(ch, picks) {
+  const count = choiceCount(ch, lvl());
+  let opts = choiceOptions(ch, picks, POOLS);
+  // Effects of the feat being edited are ignored, so its own current picks stay selectable and an un-picked skill is not still counted.
+  const others = FX().list.filter((e) => !(e.src.kind === 'feat' && sh.entry && e.src.id === sh.entry));
+  if (opts && ch.excludeSaveProf) opts = opts.filter((a) => !C().saveProf[a] && !others.some((e) => e.type === 'saveProf' && e.target === a));
+  if (opts && ch.requiresProf) {
+    const mineSkills = new Set(Object.values(picks).flat());
+    const prof = (k) => num(C().skills[k]) > 0 || others.some((e) => (e.type === 'skillProf' || e.type === 'skillExpert') && e.target === k);
+    opts = opts.filter((k) => prof(k) || mineSkills.has(k));
+  }
+  if (opts && ch.of === 'spell') opts = [...opts].sort((a, b) => (SPELLS.find((x) => x.id === a)?.level ?? 0) - (SPELLS.find((x) => x.id === b)?.level ?? 0) || a.localeCompare(b));
+  const waiting = !!ch.dependsOn && !opts?.length;
+  return { count, opts, waiting };
+}
+// Picks as stored: only this feat's choice keys, no empty values; one pick = a string.
+function cleanPicks(featId, picks) {
+  const out = {};
+  for (const ch of featChoices(FEAT_FX[featId]?.fx)) {
+    const count = choiceCount(ch, lvl());
+    const vals = [].concat(picks[ch.key] ?? []).map((v) => String(v || '').trim().slice(0, 80)).filter(Boolean);
+    if (vals.length) out[ch.key] = count === 1 ? vals[0] : vals;
+  }
+  return out;
+}
+function chPick(el, rerender) {
+  const { key, i } = el.dataset;
+  const ft = FEAT_FX[sh.featId];
+  const arr = [].concat(sh.picks[key] ?? []);
+  arr[Number(i)] = el.value;
+  sh.picks[key] = arr;
+  for (const ch of featChoices(ft?.fx)) if (ch.dependsOn === key) delete sh.picks[ch.key]; // a different list means different spells
+  if (rerender) renderSheet();
+  else if (el.dataset.fk?.endsWith('-tool')) { const sel = sheetRoot.querySelector(`select[data-key="${key}"][data-i="${i}"]`); if (sel) sel.value = ''; } // a typed tool replaces the skill
 }
 const SHEETS = {
   damage() {
@@ -2200,6 +2322,38 @@ const SHEETS = {
         <div class="sheet-actions"><button class="big" data-action="closeSheet">Cancel</button>${c.download ? '<button class="big" data-action="downloadCurrent">Download current data first</button>' : ''}<button class="${c.tone} big" data-action="confirmGo">${esc(c.ok)}</button></div>`,
     };
   },
+  choices() {
+    const ft = featById(sh.featId);
+    const fxd = FEAT_FX[sh.featId];
+    let missing = 0;
+    const groups = featChoices(fxd?.fx).map((ch) => {
+      const { count, opts, waiting } = choiceSlots(ch, sh.picks);
+      const have = [].concat(sh.picks[ch.key] ?? []);
+      const rows = Array.from({ length: count }, (_, i) => {
+        const v = have[i] || '';
+        const taken = ch.allowSame ? new Set() : new Set(have.filter((x, j) => j !== i && x));
+        const name = `${ch.label}${count > 1 ? ` ${i + 1}` : ''}`;
+        const fk = `ch-${ch.key}-${i}`;
+        if (opts === null) { // free text (a tool, a language...)
+          return `<label class="field"><span>${esc(name)}</span><input data-sh="ch" data-key="${esc(ch.key)}" data-i="${i}" data-fk="${fk}" maxlength="60" autocomplete="off" value="${esc(v)}" placeholder="Type it in"></label>`;
+        }
+        const isSk = opts.includes(v);
+        if (!v || !isSk) { if (!(ch.of === 'skillOrTool' && v)) missing += 1; }
+        const optHtml = opts.filter((o) => !taken.has(o)).map((o) => `<option value="${esc(o)}" ${o === v ? 'selected' : ''}>${esc(choiceLabel(ch, o))}</option>`).join('');
+        const tool = ch.of === 'skillOrTool' ? `<label class="field"><span>${esc(name)}: or a tool</span><input data-sh="ch" data-key="${esc(ch.key)}" data-i="${i}" data-fk="${fk}-tool" maxlength="60" autocomplete="off" value="${esc(isSk ? '' : v)}" placeholder="Tool name"></label>` : '';
+        return `<label class="field"><span>${esc(name)}</span><select data-sh="ch" data-key="${esc(ch.key)}" data-i="${i}" data-fk="${fk}" ${waiting ? 'disabled' : ''}><option value="">${waiting ? 'Choose the list first' : 'Choose…'}</option>${optHtml}</select></label>${tool}`;
+      }).join('');
+      return `<div class="ch-group"><h3>${esc(ch.label)}${count > 1 ? ` <small class="muted">(${count})</small>` : ''}</h3>${rows}</div>`;
+    }).join('');
+    const src = fxd?.fxSrc === 'community' ? '<span class="tag-s warn">Community data · unverified</span>' : '<span class="tag-s ok">SRD 5.2.1</span>';
+    return {
+      title: sh.entry ? `${ft?.name || 'Feat'}: choices` : `Take ${ft?.name || 'feat'}`,
+      body: `<p class="hint">Your picks decide which bonuses, proficiencies and spells apply. ${src} You can change them later with Edit choices on the feat.</p>
+        ${groups}
+        <div class="sheet-actions"><button class="big" data-action="closeSheet">Cancel</button><button class="ok big" data-action="choicesGo" ${!sh.entry && missing ? 'disabled' : ''}>${sh.entry ? 'Save choices' : 'Take feat'}</button></div>
+        ${!sh.entry && missing ? `<p class="hint" role="status">${missing} choice${missing > 1 ? 's' : ''} left to make.</p>` : ''}`,
+    };
+  },
   generic() {
     const base = PLANS.find((p) => p.id === sh.id);
     const max = at(PLANS_KNOWN, lvl());
@@ -2246,7 +2400,7 @@ function condChanged(msg, sub = '') {
 function pipMessage(path, spent) {
   const seg = path.split('.');
   if (seg[1] === 'slotsUsed') return `Level ${Number(seg[2]) + 1} slot ${spent ? 'spent' : 'restored'}`;
-  if (seg[1] === 'uses') return `${USES[seg[2]]?.name || 'Use'} ${spent ? 'used' : 'restored'}`;
+  if (seg[1] === 'uses') return `${USES[seg[2]]?.name || featUse(seg[2])?.name || 'Use'} ${spent ? 'used' : 'restored'}`;
   if (seg[1] === 'deathSaves') return `Death save ${seg[2] === 'fail' ? 'failure' : 'success'} ${spent ? 'marked' : 'cleared'}`;
   return 'Updated';
 }
@@ -2649,12 +2803,39 @@ const actions = {
   takeFeat: (el) => {
     const ft = featById(el.dataset.id);
     if (!ft) return;
-    const apply = () => mutate(() => { C().feats.push({ id: uid(), featId: ft.id, level: lvl(), notes: '', choices: {}, effects: [] }); }, { msg: `Took ${ft.name}` });
-    if (meetsReq(ft)) return apply();
-    confirmSheet(el, { title: 'Prerequisite not met', text: `You don't seem to meet the prerequisite (${reqText(ft)}). Take ${ft.name} anyway?`, ok: 'Take anyway', run: apply });
+    const apply = (choices = {}) => mutate(() => { C().feats.push({ id: uid(), featId: ft.id, level: lvl(), notes: '', choices, effects: [] }); }, { msg: `Took ${ft.name}` });
+    // A feat with choices opens the choice sheet first (Cancel there means the feat is not taken).
+    const go = () => (featChoices(FEAT_FX[ft.id]?.fx).length ? openSheet('choices', el, { featId: ft.id, entry: '', picks: {} }) : apply());
+    if (meetsReq(ft)) return go();
+    confirmSheet(el, { title: 'Prerequisite not met', text: `You don't seem to meet the prerequisite (${reqText(ft)}). Take ${ft.name} anyway?`, ok: 'Take anyway', run: () => { closeSheet(); go(); return 'stay'; } });
+  },
+  editChoices: (el) => {
+    const t = C().feats.find((x) => x.id === el.dataset.id);
+    if (t) openSheet('choices', el, { featId: t.featId, entry: t.id, picks: JSON.parse(JSON.stringify(t.choices || {})) });
+  },
+  choicesGo: () => {
+    const ft = featById(sh.featId);
+    const picks = cleanPicks(sh.featId, sh.picks);
+    const entry = sh.entry;
+    if (entry) {
+      mutate(() => {
+        const t = C().feats.find((x) => x.id === entry);
+        if (!t) return;
+        t.choices = picks;
+        dirtyFx();
+        const live = new Set(FX().uses().map((u) => u.key));
+        for (const k of Object.keys(C().uses)) if (k.startsWith(`feat:${entry}:`) && !live.has(k)) delete C().uses[k];
+      }, { msg: `Updated ${ft?.name || 'feat'} choices` });
+    } else {
+      mutate(() => { C().feats.push({ id: uid(), featId: sh.featId, level: lvl(), notes: '', choices: picks, effects: [] }); }, { msg: `Took ${ft?.name || 'feat'}` });
+    }
+    closeSheet();
   },
   dropFeat: (el) => {
-    mutate(() => { C().feats = C().feats.filter((x) => x.id !== el.dataset.id); }, { msg: 'Feat removed' });
+    mutate(() => {
+      C().feats = C().feats.filter((x) => x.id !== el.dataset.id);
+      for (const k of Object.keys(C().uses)) if (k.startsWith(`feat:${el.dataset.id}:`)) delete C().uses[k];
+    }, { msg: 'Feat removed' });
   },
   addSession: () => {
     const next = state.sessions.reduce((m, s) => Math.max(m, num(s.number)), 0) + 1;
@@ -2818,6 +2999,7 @@ document.addEventListener('click', (e) => {
 document.getElementById('skip')?.addEventListener('click', (e) => { e.preventDefault(); document.getElementById('main')?.focus(); });
 // Sheet: text field, checkbox, Esc to close, Tab kept inside, digits on a hardware keyboard.
 sheetRoot.addEventListener('input', (e) => {
+  if (e.target.dataset.sh === 'ch') { if (e.target.tagName === 'INPUT') chPick(e.target, false); return; }
   if (e.target.dataset.sh === 'f') {
     const field = e.target.dataset.field;
     sh.f[field] = e.target.value;
@@ -2831,6 +3013,7 @@ sheetRoot.addEventListener('input', (e) => {
   if (sh.kind === 'generic') sheetRoot.querySelector('[data-action="genericGo"]').disabled = !sh.text.trim();
 });
 sheetRoot.addEventListener('change', (e) => {
+  if (e.target.dataset.sh === 'ch') { chPick(e.target, e.target.tagName === 'SELECT'); return; }
   if (e.target.dataset.sh === 'clear') { sh.clear = e.target.checked; renderSheet(); }
 });
 document.addEventListener('keydown', (e) => {

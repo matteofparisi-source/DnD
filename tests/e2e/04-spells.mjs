@@ -55,14 +55,16 @@ export async function run(env, t) {
   await p.click('[data-action="spellView"][data-key="all"]');
   await p.click('details[data-fmore="spells"] > summary');
   for (const k of ['showLocked', 'legacy', 'extra']) await p.check(`[data-filter="spells.${k}"]`);
-  t.eq((await ids(p)).length, SPELLS.length, 'All spells with every toggle shows the full list');
+  // spells only feats reach (source 'feat') stay out of the Artificer list; 13-feats-fx.mjs covers them
+  const ART = SPELLS.filter((s) => s.source !== 'feat');
+  t.eq((await ids(p)).length, ART.length, 'All spells with every toggle shows the full Artificer list');
   const cast = {
     action: (s) => /^(1 )?action\b/.test(lead(s)), bonus: (s) => /\bbonus action\b/.test(lead(s)), reaction: (s) => /\breaction\b/.test(lead(s)),
     ritual: (s) => /ritual/i.test(s), longer: (s) => /\b(minute|hour)s?\b/.test(lead(s)),
   };
   for (const k of Object.keys(cast)) {
     await filter(p, 'cast', k);
-    const want = SPELLS.filter((s) => cast[k](SPELL_DETAILS[s.id].time) || (k === 'ritual' && s.flags.includes('R'))).map((s) => s.id).sort();
+    const want = ART.filter((s) => cast[k](SPELL_DETAILS[s.id].time) || (k === 'ritual' && s.flags.includes('R'))).map((s) => s.id).sort();
     t.eq((await ids(p)).sort(), want, `casting-time filter "${k}" matches the data`);
     await filter(p, 'cast', k);
   }

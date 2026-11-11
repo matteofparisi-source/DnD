@@ -26,6 +26,7 @@ No package.json, no build, nothing installed in the repo. Playwright is found in
 | 10-pwa | update banner (server swaps the served version), offline after one visit |
 | 11-a11y | 44px targets, names, no h-scroll on pages, open cards and sheets |
 | 12-effects | item/spell effects, attunement gating, "+" breakdowns, buffs and long rest |
+| 13-feats-fx | feat choice sheet, automatic feat bonuses, feat spells (always prepared, free casts, Feat filter), feat uses and rests, undo |
 
 ## Add a test
 Create `tests/e2e/NN-name.mjs` exporting `name` and `async function run(env, t)`. Use helpers from `tests/lib.mjs` (`openPage` seeds state, `go`, `saved`, `audit`...), assert with `t.ok(cond, msg)` / `t.eq(got, want, msg)`, end with `t.noErrors()`. Wait on conditions, not fixed sleeps. Keep files under about 250 lines.

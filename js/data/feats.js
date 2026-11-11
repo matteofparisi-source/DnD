@@ -77,7 +77,7 @@ export const FEATS = [
   F('Boon of Recovery', 'Epic Boon', 'PHB', { lvl: 19 }, 'Survive at 1 HP once per Long Rest; pool of d10s to heal.'),
   F('Boon of Skill', 'Epic Boon', 'PHB', { lvl: 19 }, 'Proficiency in all skills, Expertise in one.'),
   F('Boon of Speed', 'Epic Boon', 'PHB', { lvl: 19 }, '+30 ft Speed, Disengage as a Bonus Action.'),
-  F('Boon of Spell Recall', 'Epic Boon', 'PHB', { lvl: 19, text: 'Spellcasting' }, 'Cast a level 1-4 spell without a slot once per Long Rest.'),
+  F('Boon of Spell Recall', 'Epic Boon', 'PHB', { lvl: 19, text: 'Spellcasting' }, 'When you cast with a level 1-4 slot, roll a d4: if it equals the slot level, the slot is not used up.'),
   F('Boon of the Night Spirit', 'Epic Boon', 'PHB', { lvl: 19 }, 'Invisible in Dim Light or Darkness; Resistance there.'),
   F('Boon of Truesight', 'Epic Boon', 'PHB', { lvl: 19 }, 'Truesight 60 ft.'),
 
