@@ -13,7 +13,7 @@ No package.json, no build, nothing installed in the repo. Playwright is found in
 ## Covered
 | Suite | What |
 |---|---|
-| unit | syntax of all scripts, no `Math.random`, spell/feat/plan/equipment data, `APP_VERSION` equals `CACHE`, `ASSETS` exist and cover everything loaded, manifest and icon sizes, `normalize()` v1-v3 to v4, ids, snapshots, quota fallback |
+| unit | syntax of all scripts, no `Math.random`, spell/feat/plan/equipment data, `APP_VERSION` equals `CACHE`, `ASSETS` exist and cover everything loaded, plan/item description coverage and SRD spot check (set `SRD_TXT` to a pdftotext extract of the SRD), manifest and icon sizes, `normalize()` v1-v3 to v4, ids, snapshots, quota fallback |
 | 01-nav | first run, v1 migration on load, every page in both themes, theme cycle, 1366x768 |
 | 02-combat | dock damage/heal/temp HP, concentration DC, conditions, pips, attacks, undo, sheet focus |
 | 03-rest-cannon | rest summaries/apply/undo, hit dice, cannon create/HP/detonate/slot |
@@ -27,6 +27,7 @@ No package.json, no build, nothing installed in the repo. Playwright is found in
 | 11-a11y | 44px targets, names, no h-scroll on pages, open cards and sheets |
 | 12-effects | item/spell effects, attunement gating, "+" breakdowns, buffs and long rest |
 | 13-feats-fx | feat choice sheet, automatic feat bonuses, feat spells (always prepared, free casts, Feat filter), feat uses and rests, undo |
+| 17-plan-details | lazy description module, Description on plan and item cards (SRD tag vs community tag), search by description text, load failure, axe |
 | 14-items-fx | craft copies plan effects, SRD catalog picker, armor +N counted once, one-time Apply catalog effects, generic plan item pick |
 
 ## Add a test

@@ -397,6 +397,38 @@ export async function run(t) {
     const it2 = normalize({ version: 5, character: { items: [{ id: 'a', name: 'X', catalogId: 7, fxSrc: 'bogus' }] } }).character.items[0];
     t.ok(it2.catalogId === '' && it2.fxSrc === '', 'catalogId and fxSrc are cleaned by normalize');
   }
+  // --- 10. plan and catalog item descriptions (lazy module): coverage, SRD text verbatim, community ones short
+  {
+    const { PLAN_DETAILS: PD } = await imp('js/data/plan-details.js'); const { PLAN_FX, MAGIC_ITEMS } = await imp('js/data/item-fx.js'); const { PLANS } = await imp('js/data/plans.js');
+    t.eq(PLANS.map((p) => p.id).filter((i) => !PD[i]), [], 'every plan (also the generic ones) has a description');
+    t.eq(MAGIC_ITEMS.map((x) => `item:${x.id}`).filter((i) => !PD[i]), [], 'every catalog item has a description');
+    t.eq(Object.keys(PD).filter((k) => !(PLANS.some((p) => p.id === k) || MAGIC_ITEMS.some((x) => `item:${x.id}` === k))), [], 'every description key is a plan or a catalog item');
+    const bad = [];
+    for (const [k, d] of Object.entries(PD)) {
+      if (!d.cat || !d.desc || typeof d.verbatim !== 'boolean' || !d.source) bad.push(`${k}: fields`);
+      const community = PLAN_FX[k]?.fxSrc === 'community';
+      const generic = PLANS.find((p) => p.id === k)?.generic;
+      if (community && (d.verbatim || d.source !== 'community, unverified' || d.desc.length > 220)) bad.push(`${k}: community entry must be a short own-words summary`);
+      if (generic && (d.verbatim || d.desc.length > 220)) bad.push(`${k}: generic entry must be one short explanation`);
+      if (!community && !generic && (!d.verbatim || !/^SRD 5\.2\.1 p\.\d+$/.test(d.source))) bad.push(`${k}: SRD entry must be verbatim with a page`);
+      if (/⁣|§/.test(d.desc)) bad.push(`${k}: stray marker`);
+    }
+    t.eq(bad, [], 'plan descriptions are well-formed');
+    t.eq([Object.values(PD).filter((d) => d.verbatim).length, Object.keys(PD).filter((k) => PLAN_FX[k]?.fxSrc === 'community').length], [150, 13], 'description counts: 150 SRD verbatim, 13 community');
+    // Spot-check against the SRD text when the reading-order extract is around (set SRD_TXT; it lives outside the repo, so skip otherwise).
+    const srdPath = process.env.SRD_TXT; // path of a pdftotext extract of the SRD 5.2.1 PDF (optional)
+    if (srdPath && fs.existsSync(srdPath)) {
+      const norm = (x) => x.replace(/[\s\-•]+/g, '');
+      const N = norm(fs.readFileSync(srdPath, 'utf8'));
+      const miss = [];
+      let n = 0;
+      for (const k of ['2-bag-of-holding', '6-cloak-of-the-manta-ray', '10-ring-of-jumping', '14-flame-tongue', 'item:amulet-of-health', 'item:ioun-stone-agility', '6-wand-of-magic-missiles']) {
+        for (const para of PD[k].desc.split(/\n\n+/)) { if (para.includes(' | ')) continue; n++; if (!N.includes(norm(para))) miss.push(`${k}: ${para.slice(0, 50)}`); }
+      }
+      t.ok(n >= 12, `spot-checked ${n} SRD paragraphs`);
+      t.eq(miss, [], 'spot-checked SRD descriptions appear in the SRD text');
+    }
+  }
 
 }
 

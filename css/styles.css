@@ -295,6 +295,8 @@ input::placeholder, textarea::placeholder { color: var(--ink-3); opacity: 1; }
 .field { display: flex; flex-direction: column; gap: var(--s-1); min-width: 0; }
 .field > span { font-size: var(--fs-xs); font-weight: 600; color: var(--ink-3); text-transform: uppercase; letter-spacing: .06em; }
 .field.wide { width: 100%; margin: var(--s-2) 0; }
+.grid > .field { justify-content: flex-end; } /* a label that wraps to two lines keeps its input level with its neighbours */
+.field > input[type="date"] { height: var(--hit); padding-top: 0; padding-bottom: 0; } /* the calendar icon made it 2px taller than text inputs */
 .row .field { flex: 1 1 140px; }
 .row .field.xs { flex: 0 1 90px; }
 .row .field.sm { flex: 1 1 120px; max-width: 200px; }
@@ -374,7 +376,7 @@ button.icon { width: var(--hit); padding: 0; flex: 0 0 auto; }
 .item-head > input { font-weight: 600; flex: 1; }
 .item-head > select { width: auto; }
 .item.sel { background: var(--sel); border-left: 4px solid var(--brass); border-color: var(--brass); }
-.item.locked { opacity: .75; border-style: dashed; }
+.item.locked { border-style: dashed; background: transparent; } /* no opacity: faded text failed 4.5:1 contrast (axe) */
 .item .note { margin-top: var(--s-2); }
 .item .sum { margin: var(--s-2) 0 0; font-size: var(--fs-sm); }
 .item .row.taken { border-top: 1px dashed var(--line); padding-top: var(--s-2); }
@@ -450,6 +452,9 @@ body.sheet-open #toasts { bottom: auto; top: calc(env(safe-area-inset-top) + var
   padding: var(--s-2) var(--s-2) var(--s-2) var(--s-4); border-radius: var(--r-2); font-size: var(--fs-sm);
   box-shadow: var(--sh-2); animation: toast-in var(--dur) var(--ease);
 }
+.toast { touch-action: pan-y; user-select: none; transition: transform var(--dur) var(--ease), opacity var(--dur) var(--ease); } /* swipe left/right to dismiss */
+.toast.dragging { transition: none; cursor: grabbing; }
+@media (prefers-reduced-motion: reduce) { .toast, .toast.swiped { transition: none; } }
 .toast-msg { display: flex; flex-direction: column; min-width: 0; overflow-wrap: anywhere; }
 .toast-msg b { font-weight: 700; }
 .toast-msg span { color: var(--on-plate-2); }
@@ -826,6 +831,10 @@ button.big { min-height: 52px; font-size: var(--fs-md); }
 .tog[aria-pressed="true"]::before { background: radial-gradient(circle, currentColor 0 38%, transparent 42%); }
 .edit > summary { display: flex; align-items: center; color: var(--brass-2); font-weight: 700; letter-spacing: .06em; text-transform: uppercase; font-size: var(--fs-sm); }
 :root[data-theme="light"] .edit > summary { color: var(--brass); }
+.pd > summary { display: flex; align-items: center; color: var(--brass-2); font-weight: 700; letter-spacing: .06em; text-transform: uppercase; font-size: var(--fs-sm); }
+:root[data-theme="light"] .pd > summary { color: var(--brass); }
+.pd-cat { font-style: italic; color: var(--ink-2); margin: 0 0 var(--s-1); }
+.pd-desc p { margin: var(--s-1) 0 0; white-space: pre-line; overflow-wrap: anywhere; }
 .attune-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-3); margin: var(--s-2) 0; }
 .apips { display: inline-flex; gap: var(--s-2); }
 .apip { width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--brass); background: transparent; display: block; }

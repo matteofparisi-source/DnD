@@ -30,6 +30,7 @@ const driveRt = { busy: false, msg: '', review: false, reviewMtime: '', prep: ''
 const view = document.getElementById('view');
 const openCards = new Set(); // open journal cards (sessions, NPCs, places, factions, quests), by id
 const openSpells = new Set();
+const openPd = new Set(); // open plan/item Description blocks, by card key (plan:<planId> | i:<itemId>)
 const openFilters = new Set();
 const openBlocks = new Set(); // open state of the collapsed editors on Combat
 const openBd = new Set(); // open "+" breakdowns, by key (abil:int, ac, init...)
@@ -48,6 +49,21 @@ function ensureDetails() {
     .then(([m, f]) => { DETAILS = { ...m.SPELL_DETAILS, ...f.FEAT_SPELL_DETAILS }; detailsState = 'idle'; })
     .catch(() => { detailsState = 'failed'; })
     .then(() => { if (state.ui.tab === 'spells') renderList(); });
+}
+
+// Plan and magic item descriptions (about 65 KB) are loaded on demand: when the Plans or Magic items page renders, or when a Description opens.
+let PDET = null;
+let pdetState = 'idle'; // idle | loading | done | failed
+function ensurePlanDetails() {
+  if (pdetState !== 'idle') return; // loading, loaded or failed (no retry until reload: renderList below would loop)
+  pdetState = 'loading';
+  import('./data/plan-details.js')
+    .then((m) => { PDET = m.PLAN_DETAILS; pdetState = 'done'; })
+    .catch(() => { pdetState = 'failed'; })
+    .then(() => {
+      if (state.ui.tab === 'plans') renderList(); // the search also reads the description text
+      document.querySelectorAll('details[data-pd][open] > .lazy-body').forEach((b) => { b.innerHTML = pdBody(pdKeyOfCard(b.parentElement.dataset.pd)); });
+    });
 }
 
 // ---------- helpers ----------
@@ -1210,6 +1226,46 @@ function tabSpells() {
 }
 
 // ----- Plans
+// Description entries: a plan's own id, or `item:<catalog id>`. A plan learned from a generic one shows the catalog item of the same name (if any).
+function pdKeyPlan(p) {
+  if (!p.custom) return p.id;
+  const e = CAT_BY_NAME.get(p.name);
+  return e ? `item:${e.id}` : '';
+}
+function pdKeyItem(it) {
+  const cid = it.catalogId || '';
+  if (cid.startsWith('plan:')) return cid.slice(5);
+  if (cid.startsWith('item:')) return cid;
+  const plan = it.planId ? PLANS.find((p) => p.id === it.planId && !p.generic) : null;
+  if (plan) return plan.id;
+  const custom = it.planId ? C().plans.custom.find((p) => p.id === it.planId) : null;
+  return custom ? pdKeyPlan(custom) : '';
+}
+function pdKeyOfCard(card) {
+  if (card.startsWith('plan:')) { const p = allPlans().find((x) => x.id === card.slice(5)); return p ? pdKeyPlan(p) : ''; }
+  const it = C().items.find((x) => x.id === card.slice(2));
+  return it ? pdKeyItem(it) : '';
+}
+function pdBody(key) {
+  const d = PDET && PDET[key];
+  if (!d) return `<p class="muted" role="status">${pdetState === 'failed' ? "The description couldn't load (offline?)." : PDET ? 'No description for this entry.' : 'Loading description…'}</p>`;
+  const paras = String(d.desc || '').split(/\n\n+/).filter(Boolean).map((t) => `<p>${esc(t)}</p>`).join('');
+  const src = d.verbatim
+    ? `<span class="tag-s ok">SRD 5.2.1 · official text</span> <span class="muted">${esc(d.source)}</span>`
+    : /^community/.test(d.source)
+    ? '<span class="tag-s warn">Community source · unverified</span> <span class="muted">short summary in our own words</span>'
+    : '<span class="tag-s">Summary in our own words</span>';
+  return `<p class="pd-cat">${esc(d.cat)}</p><div class="pd-desc">${paras}</div><p class="sd-src">${src}</p>`;
+}
+// The collapsible Description block of a plan or item card (not inside a <summary>). The body is built only when it is open.
+function pdBlock(card, key) {
+  if (!key || (PDET && !PDET[key])) return '';
+  const open = openPd.has(card);
+  return `<details class="pd" data-lazy="pd:${esc(card)}" ${open ? 'open' : ''}>
+    <summary>Description</summary>
+    ${open ? `<div class="lazy-body">${pdBody(key)}</div>` : ''}
+  </details>`;
+}
 function planCard(p) {
   const known = planKnown(p);
   const avail = p.tier <= lvl();
@@ -1233,9 +1289,11 @@ function planCard(p) {
       ${srcLink(SOURCE_LINKS.plan[p.id], p.name)}
       ${made ? `<span class="tag-s r">${made} made</span>` : ''}
     </div>
+    ${pdBlock(`plan:${p.id}`, pdKeyPlan(p))}
   </div>`;
 }
 function plansList() {
+  ensurePlanDetails();
   const f = F('plans');
   const view = f.view || 'now'; // now = known first, then what I can learn now | known | all
   const list = allPlans().filter((p) => {
@@ -1243,7 +1301,7 @@ function plansList() {
     if (f.type && p.type !== f.type) return false;
     if (f.attune === 'yes' && p.attune !== true) return false;
     if (f.attune === 'no' && p.attune !== false) return false;
-    return matchQ('plans', p.name, p.type, p.base);
+    return matchQ('plans', p.name, p.type, p.base, PDET?.[pdKeyPlan(p)]?.desc);
   }).sort((a, b) => a.tier - b.tier || (!!a.generic - !!b.generic) || a.name.localeCompare(b.name));
   if (view === 'all') return list.length ? list.map(planCard).join('') : '<p class="muted">No plan matches these filters.</p>';
   const known = list.filter((p) => planKnown(p) && !p.generic);
@@ -1401,6 +1459,7 @@ function itemCard(i, kind) {
       ${i.needsAttune || i.attuned ? `<button class="tog" data-action="toggleAttune" data-id="${esc(i.id)}" aria-pressed="${!!i.attuned}">Attuned</button>` : ''}
       ${catalogOffer(i) ? `<button class="small" data-action="applyFx" data-id="${esc(i.id)}">Apply catalog effects</button>` : ''}
     </div>
+    ${pdBlock(`i:${i.id}`, pdKeyItem(i))}
     <details class="edit" data-block="e-${esc(i.id)}" data-lazy="${kind}:${esc(i.id)}" ${open ? 'open' : ''}>
       <summary>Edit</summary>
       ${open ? `<div class="lazy-body">${itemEdit(i, kind)}</div>` : ''}
@@ -1473,6 +1532,7 @@ function tabEquipment() {
 
 // ----- Magic items
 function itemsList() {
+  ensurePlanDetails();
   const f = F('items');
   const list = C().items.filter((i) => {
     if (i.rarity === 'Mundane') return false;
@@ -1741,7 +1801,7 @@ function jBody(coll, e) {
     places: () => `
       <div class="grid">
         ${input(`${p}.name`, { label: 'Name' })}
-        ${input(`${p}.kind`, { label: 'Kind (city, district, dungeon…)' })}
+        ${input(`${p}.kind`, { label: 'Kind', placeholder: 'City, dungeon…' })}
         ${input(`${p}.region`, { label: 'Region' })}
       </div>`,
     factions: () => `
@@ -2048,6 +2108,38 @@ function toast(msg, { undo: withUndo = false, sub = '', ms, open = '' } = {}) {
     t.remove();
   };
   toastTimer = setTimeout(hide, ms ?? (withUndo ? 6000 : 2600));
+  swipeAway(t);
+}
+// Swipe a toast left or right to dismiss it (drags that start on its buttons are ignored, so Undo/Open still work).
+function swipeAway(t) {
+  let x0 = null; let dx = 0; let t0 = 0;
+  const reset = () => { t.style.transform = ''; t.style.opacity = ''; t.classList.remove('dragging'); x0 = null; dx = 0; };
+  t.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0 || e.target.closest('button')) return;
+    x0 = e.clientX; t0 = performance.now(); dx = 0; t.classList.add('dragging');
+    t.setPointerCapture?.(e.pointerId);
+  });
+  t.addEventListener('pointermove', (e) => {
+    if (x0 === null) return;
+    dx = e.clientX - x0;
+    t.style.transform = `translateX(${dx}px)`;
+    t.style.opacity = String(Math.max(0.2, 1 - Math.abs(dx) / (t.offsetWidth || 300)));
+  });
+  const end = () => {
+    if (x0 === null) return;
+    const fast = Math.abs(dx) / Math.max(1, performance.now() - t0) > 0.6; // px per ms: a flick
+    if (Math.abs(dx) > Math.min(100, (t.offsetWidth || 300) * 0.3) || (fast && Math.abs(dx) > 30)) {
+      const dir = dx < 0 ? -1 : 1;
+      t.classList.remove('dragging'); t.classList.add('swiped');
+      t.style.transform = `translateX(${dir * (window.innerWidth || 400)}px)`; t.style.opacity = '0';
+      const done = () => { if (t.isConnected) t.remove(); if (toastRoot.firstChild === null) clearTimeout(toastTimer); };
+      t.addEventListener('transitionend', done, { once: true });
+      setTimeout(done, 300); // reduced motion: no transition event
+      x0 = null;
+    } else reset();
+  };
+  t.addEventListener('pointerup', end);
+  t.addEventListener('pointercancel', reset);
 }
 function pulseHP(kind) {
   document.querySelectorAll('.dock-num, .plate-hp b').forEach((el) => {
@@ -3214,6 +3306,7 @@ const LAZY = {
   spell: (id) => { const sp = SPELLS.find((x) => x.id === id); return sp ? spellBody(sp) : ''; },
   equip: (id) => { const it = C().items.find((x) => x.id === id); return it ? itemEdit(it, 'equip') : ''; },
   magic: (id) => { const it = C().items.find((x) => x.id === id); return it ? itemEdit(it, 'magic') : ''; },
+  pd: (card) => pdBody(pdKeyOfCard(card)),
   fx: (id) => { const t = C().feats.find((x) => x.id === id); return t ? fxEditor(`character.feats.#${t.id}.effects`, t.effects, 'Numbers this feat changes: they join your sheet automatically.') : ''; },
 };
 view.addEventListener('toggle', (e) => {
@@ -3231,9 +3324,12 @@ view.addEventListener('toggle', (e) => {
     return;
   }
   if (d.lazy) {
-    const [kind, id] = d.lazy.split(':');
-    const set = kind === 'spell' ? openSpells : openBlocks;
-    const key = kind === 'spell' ? id : d.block;
+    const cut = d.lazy.indexOf(':');
+    const kind = d.lazy.slice(0, cut);
+    const id = d.lazy.slice(cut + 1);
+    const set = kind === 'spell' ? openSpells : kind === 'pd' ? openPd : openBlocks;
+    const key = kind === 'spell' ? id : kind === 'pd' ? id : d.block;
+    if (kind === 'pd' && t.open) ensurePlanDetails();
     const body = t.querySelector(':scope > .lazy-body');
     if (t.open) {
       set.add(key);
